@@ -1,0 +1,38 @@
+// Copyright 2018 The Goma Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+
+package auth;
+
+message AuthReq {
+  string authorization = 1;
+
+  // TODO: have method, request path?
+}
+
+message Token {
+  string access_token = 1;
+  string token_type = 2;
+}
+
+message AuthResp {
+  string email = 1;
+  google.protobuf.Timestamp expires_at = 3;
+
+  // number of requests allowed until expire.
+  // -1 means unlimited. 0 means disallow.
+  int32 quota = 4;
+  // TODO: group quota?
+
+  // error description for user.
+  string error_description = 5;
+
+  reserved 6;
+  Token token = 7;
+  // group that email belongs to.
+  string group_id = 8;
+}

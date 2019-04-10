@@ -1,0 +1,110 @@
+// Copyright 2018 The Goma Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+syntax = "proto3";
+
+package command;
+
+// Install describes which command to be installed.
+// path is represented as server path (posix style),
+// and converted to client path in CmdDescriptor.Setup.
+//
+// NEXT ID TO USE: 8
+message Install {
+  // PrefixStyle represents a style of prefix.
+  // if it is ASIS, prefix parameter is read as-is.
+  // if it is REGEXP, prefix parameter is read as a regular expression.
+  // the install is automatically extended to all matching directories.
+  // e.g. if there is directory named clang-r123 and clang-r234, and
+  // clang-r[0-9]+ is set in prefix, install for both clang-r123 and clang-r234
+  // are made.
+  // in this case, you can use grouping i.e. parentheses, and you can use
+  // the variables in binary_hash_from field in ForSelector.
+  // if it is REGEXP_MAY_OMIT_BINARY_HASH_MISSING, then apply REGEXP rule
+  // but skip if a file specified with binary_hash_from is missing.
+  enum PrefixStyle {
+    ASIS = 0;
+    REGEXP = 1;
+    REGEXP_MAY_SKIP_BINARY_HASH_MISSING = 2;
+  }
+
+  // command key (e.g. "gcc", "clang++")
+  // note that this value will be Selector name in command.proto.
+  // in other words, this value must be the same with matching CommandSpec name
+  // in api/goma_data.proto if the install is a compiler.
+  // i.e. equivalent CompilerFlags::GetCompilerName.
+  //
+  // followings are known compiler keys (as of Jun 2017):
+  // gcc, g++, clang, clang++, cl.exe, clang-cl, javac, ps3ppusnc.exe
+  //
+  // for subprogram etc, it should be basename
+  // e.g. "libFindBadConstructs.so".
+  string key = 1;
+
+  // prefix dir (or toolchain root).
+  string prefix = 2;
+
+  // prefix_style represents how prefix need to be handled.
+  PrefixStyle prefix_style = 7;
+
+  // path in prefix dir.
+  // actual binary should be found in "prefix/path".
+  string path = 3;
+
+  // glob for additional files (i.e. wrapper scripts, libs etc).
+  // glob syntax is filepath.Match's.
+  // relative to prefix dir.
+  // if it ends with '/', all files under this dir will be added.
+  repeated string files = 4;
+
+  // ForSelector is used for setting selector for cross compile.
+  // selector's name and version is set by compiler specified by
+  // prefix and path above.
+  // note that setup_cmd in cmd_server is responsible for setting version and
+  // equivalent hash, and setting cross option in CmdDescriptor.
+  // for compilers, the result of --version option must be the same between
+  // ForSelector and Install.
+  // for subprograms, the behavior must be the same between ForSelector and
+  // Install.
+  // ForSelector and Install are expected to be made from the same source code.
+  message ForSelector {
+    // target of this cross compile.
+    // this is used for dispatching a compiler as a build target.
+    // note that target must be normalized.
+    // e.g. x86_64-darwin
+    string target = 1;
+    // binary_hash_from represents a filename to calculate hash when selector is
+    // made.
+    // e.g. darwin/third_party/llvm-build/Release+Asserts/bin/clang
+    //
+    // if prefix_style above is either of REGEXP or
+    // REGEXP_MAY_SKIP_BINARY_HASH_MISSING, you can use regexp grouping variable
+    // here.
+    // e.g. if prefix_style is REGEXP, prefix is linux/clang-([0-9]+) and
+    // found clang-12345, binary_hash_from darwin/clang-$1/bin/clang is
+    // automatically converted to darwin/clang-12345/bin/clang when this
+    // field is used.
+    // if prefix_style is REGEXP_MAY_SKIP_BINARY_HASH_MISSING and
+    // darwin/clang-12345/bin/clang does not exist, setup_cmd just skip
+    // to proceed setup of the command without error.
+    string binary_hash_from = 2;
+  }
+
+  ForSelector for_selector = 5;
+
+  // clang_need_target is true if --target option is always needed
+  // to run command.
+  // https://clang.llvm.org/docs/CrossCompilation.html#target-triple
+  // this can be also true if exec_server want to use client's raw target.
+  // e.g. set --target x86_64-apple-darwin-10.8.0 sent by client.
+  // note: this is clang/clang++ only.
+  bool clang_need_target = 6;
+}
+
+message Setup {
+  repeated Install installs = 1;
+
+  reserved 2;
+  reserved "package_opt";
+}

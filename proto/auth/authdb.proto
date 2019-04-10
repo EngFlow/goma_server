@@ -1,0 +1,16 @@
+// Copyright 2018 The Goma Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+syntax = "proto3";
+
+package auth;
+
+message CheckMembershipReq {
+  string email = 1;
+  string group = 2;
+}
+
+message CheckMembershipResp {
+  bool is_member = 1;
+}

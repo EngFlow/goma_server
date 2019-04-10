@@ -1,0 +1,26 @@
+// Copyright 2018 The Goma Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+syntax = "proto3";
+
+package settings;
+
+message Settings {
+  string name = 3;
+
+  string endpoint_url = 1;
+  string certificate = 2;
+
+  // requires oauth2 for cloud service.
+  bool oauth2_cloud = 4;
+}
+
+message SettingsReq {
+  reserved 1;
+  string use_case = 2;
+}
+
+message SettingsResp {
+  Settings settings = 1;
+}

@@ -1,0 +1,20 @@
+// Copyright 2018 The Goma Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+syntax = "proto3";
+
+package command;
+
+// PackageOpts is a package option.
+// NEXT_ID_TO_USE: 8
+message PackageOpts {
+  // emulation_command specifies which emulation layer is necessary for this package.
+  // If empty, it means no emulation layer is necessary.
+  string emulation_command = 7;
+
+  // output_file_filters is a set of regexp to filter output files.
+  repeated string output_file_filters = 5;
+
+  reserved 1, 2, 3, 4, 6;
+}

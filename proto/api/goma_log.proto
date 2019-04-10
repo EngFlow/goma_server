@@ -1,0 +1,252 @@
+// Copyright 2011 The Goma Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+//
+// proto definitions for goma log.
+
+syntax = "proto2";
+
+package devtools_goma;
+
+// NEXT ID TO USE: 92
+message ExecLog {
+  enum AuthenticationType {
+    NONE = 0;
+    UNKNOWN = 1;
+    // reserved 2,3
+    OAUTH2_UNSPEC = 4;
+    OAUTH2_APPLICATION = 5;
+    OAUTH2_SERVICE_ACCOUNT = 6;
+    OAUTH2_GCE_SERVICE_ACCOUNT = 7;
+    OAUTH2_LUCI_LOCAL_AUTH = 8;
+  };
+  enum NetworkFailureType {
+    NO_NETWORK_ERROR = 0;  // succeeded or not used.
+    DISABLED = 1;  // failed because http is disabled (failnow() is true).
+    UNKNOWN_NETWORK_ERROR = 2;  // unknown error status.
+    CONNECT_FAILED = 3;  // failed at connect.
+    SEND_FAILED = 4;  // failed at send.
+    TIMEDOUT_AFTER_SEND = 5;  // timed out after request has sent.
+    RECEIVE_FAILED = 6;  // failed at receiving response.
+    BAD_HTTP_STATUS_CODE = 7;  // received but response was not 2xx.
+  };
+  enum CacheSource {
+    UNKNOWN_CACHE = 0;
+    MEM_CACHE = 1;
+    STORAGE_CACHE = 2;
+    LOCAL_OUTPUT_CACHE = 3;
+  };
+  // optional string compiler_proxy_id = 1;
+  optional string username = 46;
+  optional string nodename = 47;
+  optional int32 port = 48;
+  optional int32 compiler_proxy_start_time = 49;
+  optional int32 task_id = 50;
+  reserved 81;  // deprecated: use_case
+  optional string build_id = 91;
+
+  optional string compiler_proxy_user_agent = 51;
+
+  // request info.
+  optional int32 start_time = 2;
+  repeated string arg = 3;
+  repeated string env = 4;
+  optional string cwd = 5;
+  repeated string expanded_arg = 62;
+
+  // command spec
+  optional string command_version = 71;
+  optional string command_target = 72;
+
+  optional string latest_input_filename = 59;
+  optional int32 latest_input_mtime = 60;
+
+  optional bool use_ssl = 64;
+  reserved 65;
+  optional AuthenticationType auth_type = 86 [default = NONE];
+  optional CpuFeatures cpu_features = 87;
+  optional NetworkFailureType network_failure_type = 88
+      [default = NO_NETWORK_ERROR];
+  optional OSInfo os_info = 89;
+
+  // in INIT.
+  optional int32 pending_time = 63;
+  // in SETUP.
+  optional int32 compiler_info_process_time = 82;
+  // include_preprocess_time is sum of
+  // include_processor_wait_time and include_processor_run_time.
+  optional int32 include_preprocess_time = 6;
+  optional int32 include_processor_wait_time = 84;
+  optional int32 include_processor_run_time = 85;
+  optional bool depscache_used = 78;
+  optional int32 include_preprocess_total_files = 79;
+  optional int32 include_preprocess_skipped_files = 80;
+
+  // in FILE_REQ.
+  optional int32 include_fileload_time = 7;
+  repeated int32 include_fileload_pending_time = 69;
+  repeated int32 include_fileload_run_time = 70;
+  optional int32 num_total_input_file = 8;
+
+  // repeated by retry.
+  repeated int32 num_uploading_input_file = 9;
+  repeated int32 num_missing_input_file = 10;
+  repeated int32 num_file_uploaded_during_exec_failure = 66;
+  // repeated by each input file.
+  repeated int32 input_file_time = 11;
+  repeated int32 input_file_size = 12;
+
+  // in CALL_EXEC.  repeated by retry.
+  repeated int32 rpc_call_time = 13;
+  repeated int32 rpc_req_size = 14;
+  repeated int32 rpc_resp_size = 15;
+  repeated int32 rpc_raw_req_size = 16;
+  repeated int32 rpc_raw_resp_size = 17;
+  repeated string rpc_master_trace_id = 58;
+  repeated int32 rpc_throttle_time = 67;
+  repeated int32 rpc_pending_time = 57;
+  repeated int32 rpc_req_build_time = 18;
+  repeated int32 rpc_req_send_time = 19;
+  repeated int32 rpc_wait_time = 20;
+  repeated int32 rpc_resp_recv_time = 21;
+  repeated int32 rpc_resp_parse_time = 22;
+
+  // stats from backends. repeated by exec retry.
+
+  // in FILE_RESP.
+  optional int32 file_response_time = 32;
+  optional int32 num_output_file = 33;
+  // repeated by each output file
+  repeated int32 output_file_time = 34;
+  repeated int32 output_file_size = 35;
+  repeated int32 chunk_resp_size = 36;
+
+  // Total time elapsed for handling the request in compiler_proxy.
+  optional int32 handler_time = 37;
+
+  // result info
+  optional string exec_command_not_found = 76;
+  optional string exec_command_name_mismatch = 73;
+  optional string exec_command_target_mismatch = 74;
+  optional string exec_command_version_mismatch = 38;
+  optional string exec_command_binary_hash_mismatch = 39;
+  optional string exec_command_subprograms_mismatch = 75;
+  optional int32 exec_exit_status = 40;
+  optional int32 exec_request_retry = 41;
+  repeated string exec_request_retry_reason = 56;
+
+  // local run
+  optional string local_run_reason = 42;
+  optional int32 local_pending_time = 43;
+  optional int32 local_run_time = 44;
+  // TODO: use int32?
+  optional int64 local_mem_kb = 52;
+  repeated int32 local_output_file_time = 54;
+  // TODO: use int64?
+  repeated int32 local_output_file_size = 55;
+  optional int32 local_delay_time = 61;
+
+  optional bool cache_hit = 45;
+  optional CacheSource cache_source = 90;
+
+  // goma_error indicates result mismatch (exit status, stdout, stderr) between
+  // local and remote.
+  optional bool goma_error = 53;
+
+  // compiler_proxy_error indicates it replied failure exit status to gomacc
+  // while remote/local compilation have succeeded.
+  // so not genuie compilation failure.
+  optional bool compiler_proxy_error = 77;
+}
+
+// NEXT ID TO USE: 8
+message MemoryUsageLog {
+  // compiler_proxy identification
+  optional int32 compiler_proxy_start_time = 1;
+  optional string compiler_proxy_user_agent = 2;
+
+  // user information
+  optional string username = 3;
+  optional string nodename = 4;
+
+  // memory information
+  optional int64 memory = 5;
+  optional int64 virtual_memory = 7;
+  optional int64 time = 6;
+}
+
+message SaveLogReq {
+  repeated ExecLog exec_log = 1;
+  repeated MemoryUsageLog memory_usage_log = 2;
+}
+
+message SaveLogResp {
+}
+
+message NumberSummary {
+  optional int64 samples = 1;
+  optional int32 average = 2;
+
+  optional int32 minimum = 10;
+  optional int32 percentile_2 = 11;
+  optional int32 percentile_9 = 12;
+  optional int32 lower_quantile = 13;
+  optional int32 median = 14;
+  optional int32 upper_quantile = 15;
+  optional int32 percentile_91 = 16;
+  optional int32 percentile_98 = 17;
+  optional int32 maximum = 18;
+}
+
+// NEXT ID TO USE: 13
+message ExecLogStat {
+  optional NumberSummary handler_time = 1;
+
+  optional NumberSummary compiler_info_process_time = 12;
+  optional NumberSummary include_preprocess_time = 2;
+  optional NumberSummary include_fileload_time = 3;
+  optional NumberSummary rpc_call_time = 4;
+  optional NumberSummary file_response_time = 7;
+  optional NumberSummary local_pending_time = 8;
+  optional NumberSummary local_run_time = 9;
+
+  optional int64 cache_hit = 10;
+  optional int64 goma_error = 11;
+}
+
+// NEXT ID TO USE: 12
+message CpuFeatures {
+  optional bool mmx = 1;
+  optional bool sse = 2;
+  optional bool sse2 = 3;
+  optional bool sse3 = 4;
+  optional bool sse41 = 5;
+  optional bool sse42 = 6;
+  optional bool popcnt = 7;
+  optional bool avx = 8;
+  optional bool avx2 = 9;
+  optional bool aesni = 10;
+  optional bool non_stop_time_stamp_counter = 11;
+}
+
+// NEXT ID TO USE: 4
+message OSInfo {
+  message LinuxInfo {
+    optional string gnu_libc_version = 1;
+  };
+
+  message WinInfo {
+  };
+
+  message MacInfo {
+    // TODO: Have max_osx_major_version
+    optional int32 mac_osx_minor_version = 1;
+  };
+
+  oneof os_info_oneof {
+    LinuxInfo linux_info = 1;
+    WinInfo win_info = 2;
+    MacInfo mac_info = 3;
+  };
+}

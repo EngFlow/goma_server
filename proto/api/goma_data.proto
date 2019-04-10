@@ -1,0 +1,410 @@
+// Copyright 2010 The Goma Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+//
+// new proto definitions for goma v2
+// LINT: ALLOW_GROUPS
+
+syntax = "proto2";
+
+package devtools_goma;
+
+// persistent data
+
+// hash_key = sha256(serialized FileBlob)
+//
+// for small file (< 2MB)
+//   blob_type=FILE, !has_offset(), has_content()
+//                   has_file_size(), hash_key_size() == 0
+// for large file
+//   blob_type=FILE_META, !has_offset(), !has_content()
+//                   has_file_size(), hash_key_size() > 0
+//  for each hash_key(i)
+//     blob_type=FILE_CHUNK, has_offset(), has_content(),
+//                   has_file_size(), hash_key_size() == 0
+message FileBlob {
+  enum BlobType {
+    FILE_UNSPECIFIED = 0;
+    FILE = 1;
+    FILE_META = 2;
+    FILE_CHUNK = 3;
+    // ARCHIVE = 4;
+  }
+  required BlobType blob_type = 1;
+
+  // for blob_type=FILE_CHUNK
+  optional int64 offset = 10;
+
+  // for blob_type=FILE or FILE_CHUNK
+  optional bytes content = 11;
+
+  // for all blob_types
+  optional int64 file_size = 20;
+
+  // for blob_type=FILE_META.  hash_key is FileBlob hash of FILE_CHUNK.
+  repeated string hash_key = 21;
+}
+
+// Goma backend selects compiler with CommandSpec.
+// NEXT ID TO USE: 14
+message CommandSpec {
+  optional string name = 1;  // "gcc", "g++", "cl.exe", etc, without
+                             // path, version number and architecture.
+  optional string version = 2;  // "4.4.3[Ubuntu 4.4.3-4ubuntu5]"
+  optional string target = 3;  // "x86_64-linux-gnu
+
+  // Binary size of the command.
+  // Necessary if toolchain is sent to the server.
+  // TODO: Now that we have ToolchainSpec, this is not necessary.
+  optional int64 size = 13;
+
+  // The followings will be used to request more specific version of
+  // command, populated by compiler_proxy.
+  optional bytes binary_hash = 4;  // to require exact the same binary.
+  // A list of alternative hashes. This field will be used when
+  // multiple binaries can be considered the same. For example, linux
+  // android gcc will be used even if a user is using goma from
+  // mac. For such cases, we should fill this field with binary hash
+  // of mac gcc.
+  repeated bytes equivalent_hash = 11;
+  optional string detailed_info = 5;  // output of "gcc -v"
+  // Tell compiler_proxy what the path to local 'gcc' (not goma gcc)
+  // is, populated by gomacc.cc and consumed by compiler_proxy
+  optional string local_compiler_path = 6;
+
+  // Compiler system include paths (sent from compiler_proxy).
+  // Note that system include paths can be a relative path from cwd.
+  // For Windows NaCl, it could also be a relative path from toolchain root.
+  repeated string system_include_path = 7;
+  repeated string cxx_system_include_path = 8;
+  repeated string system_framework_path = 9;
+
+  // Compiler system library paths
+  repeated string system_library_path = 12;
+
+  // An optional label of this command for logging/monitoring purpose.
+  optional string comment = 10;
+}
+
+message SubprogramSpec {
+  // full path (in client filesystem)
+  // or basename (in result when default subprogram is used).
+  optional string path = 1;
+  optional string binary_hash = 2;
+  // Binary size of the subprogram.
+  optional int64 size = 3;
+}
+
+// Experimental.
+// Specifies toolchain specification.
+// This spec is necessary only if toolchain is also uploaded.
+message ToolchainSpec {
+  // path to toolchain. Relative path from ExecReq::cwd or Absolute path.
+  optional string path = 1;
+  // SHA256 hash of the toolchain.
+  optional string hash = 2;
+  // file size of toolchain (in bytes).
+  optional int64 size = 3;
+  // true if the toolchain has 'x' bit.
+  optional bool is_executable = 4;
+  // If this spec is a symlink, set this path.
+  // hash, size, and is_executable should be empty in this case.
+  // If this spec is not a symlink, this should be empty.
+  optional string symlink_path = 5;
+}
+
+message ExecResult {
+  required int32 exit_status = 1 [default=-1];
+  optional bytes stdout_buffer = 2;
+  optional bytes stderr_buffer = 3;
+  optional CommandSpec command_spec = 4;
+
+  // subprograms that were used in compilation.
+  repeated SubprogramSpec subprogram = 5;
+
+  repeated group Output = 10 {
+    // TODO: We might want to normalize this path to relative path?
+    optional string filename = 11;  // relative to request cwd or full path
+    // if blob.blob_type=FILE_META, client need to request blob.hash_key() later
+    optional FileBlob blob = 12;
+    optional bool is_executable = 13 [default=false];
+  };
+}
+
+// Common RPC message
+
+// NEXT ID TO USE: 12
+message RequesterInfo {
+  optional string addr = 1;  // requester's ip addr.
+  optional string username = 2;  // requester's user name
+  // Identifier for each compiler_proxy request.
+  optional string compiler_proxy_id = 3;
+  // The version of goma protocol. This is intended to be used for two purpose:
+  //
+  // - When we changes the meanings of compiler_proxy's request, we may
+  //   want to support the previous type of requests in our backend for a while.
+  //   Backend can change its behavior by checking the value of this field.
+  // - Once a server stops supporting the old behavior, the backend can
+  //   send an error messages to the client. Also, we can track the clients'
+  //   versions with this field so we can easily decide if it's safe to
+  //   stop supporting the old behavior.
+  //
+  // 0 => 1: Changed the meaning of command_spec.system_include_path.
+  //         Now -isysroot in a command line is considered to obtain this field.
+  // 1 => 2: command_spec.version contains vendor versions.
+  //         E.g., 4.4.3[Ubuntu 4.4.3-4ubuntu5]
+  enum GomaApiVersion {
+    CURRENT_VERSION = 2;
+  }
+  // Can't use [default=CURRENT_VERSION] since GomaApiVersion is not int32.
+  optional int32 api_version = 4 [default=2];
+
+  optional int32 pid = 5;
+
+  // deprecated: indicates client use case.
+  reserved 6;
+
+  // # of retry. 0 is first call.
+  optional int32 retry = 7;
+
+  optional string goma_revision = 8;
+
+  // Unique ID per build.
+  // Client should set unique identifier of the build in this field.
+  //
+  // Note to LUCI users: since there could be multiple compile steps for
+  //                     recipes, you cannot use buildbucket build_id here.
+  optional string build_id = 9;
+
+  // Requester's dimensions. Each dimension is a "<key>:<value>" pair.
+  //
+  // `dimensions` can define the constraint of the remote machine.
+  // e.g. "os":"linux".
+  //
+  // Inspired from swarming bot dimensions.
+  // https://cs.chromium.org/chromium/infra/luci/appengine/swarming/proto/bots.proto
+  repeated string dimensions = 10;
+
+  // Implementation Note: `WINDOWS` is defined on Win, so we have to add
+  // prefix or suffix.
+  enum PathStyle {
+    UNKNOWN_STYLE = 0;
+    POSIX_STYLE = 1;    // unix-style, slash separated.
+    WINDOWS_STYLE = 2;  // windows-style. backslash separated.
+  }
+  // Requester's path style.
+  optional PathStyle path_style = 11;
+}
+
+message RequesterEnv {
+  optional string gomacc_path = 41;  // full pathname of gomacc.
+  optional string local_path = 42;  // user's PATH.
+  optional int32 umask = 43;  // user's umask.
+  optional bool verify_output = 50;  // GOMA_VERIFY_OUTPUT
+  optional bool use_local = 51;  // GOMA_USE_LOCAL
+  optional bool fallback = 52; // GOMA_FALLBACK
+  optional string verify_command = 53; // GOMA_VERIFY_COMMAND
+  repeated string fallback_input_file = 60;  // GOMA_FALLBACK_INPUT_FILES
+}
+
+// ExecService Interface
+
+message ExecReq {
+  required CommandSpec command_spec = 1;
+  repeated string arg = 2;
+  repeated string env = 3;
+  optional string cwd = 4;
+
+  repeated group Input = 10 {
+    optional string filename = 11;  // relative to cwd or full path
+    required string hash_key = 12;
+    optional FileBlob content = 13;
+  };
+
+  // The @ notations in arg should be expanded and the result should
+  // be stored in this field for javac and VC++.
+  repeated string expanded_arg = 14;
+
+  // Subprograms that would be used in client. By setting this,
+  // client could request backend to use the same subprograms.
+  //
+  repeated SubprogramSpec subprogram = 15;
+
+  optional RequesterInfo requester_info = 30;
+  enum CachePolicy {
+    // IGNORE = 0;
+    LOOKUP_AND_STORE = 1;
+    LOOKUP_ONLY = 2;
+    STORE_ONLY = 3;
+    LOOKUP_AND_STORE_SUCCESS = 4;
+  }
+  optional CachePolicy cache_policy = 31 [default = LOOKUP_AND_STORE];
+
+  // This is passed from gomacc to compiler proxy, and compiler proxy
+  // clears it before sending ExecReq to goma service.
+  optional RequesterEnv requester_env = 32;
+
+  // When hermetic_mode is true, restrict backend use the same compiler
+  // as local version. Backend should use a compiler package
+  // that has the same version string and the same binary_hash only.
+  // If there is no such compilers in backend, it should not run any other
+  // compiler but returns error: ExecResp contains error messages,
+  // no command spec and empty missing_input.  It isn't rpc error.
+  optional bool hermetic_mode = 33;
+
+  // Requests that the call is traced.
+  optional bool trace = 34;
+
+  // Expected output files and dirs, which are calculated in CompilerFlags.
+  // Goma server will return these files and dirs as output.
+  //
+  // If files which are not specified here are generated in the server,
+  // those files will be ignored (so, we can ignore temporary cache file or
+  // telemetry information).
+  //
+  // If files which are specified here are not generated in the server,
+  // the server just ignores such files. If the specified files do not look
+  // generated by a compiler, Goma server can return BAD_REQUEST.
+  //
+  // If output files and dirs are not specified, the server can calculate
+  // expected output files and dirs by itself (if possible).
+  //
+  // These path must be in client-format.
+  // Use '/' on Linux and Mac, and use '\\' for Windows.
+  repeated string expected_output_files = 35;
+  repeated string expected_output_dirs = 36;
+
+  // EXPERIMENTAL.
+  // True if ExecReq contains toolchains as input.
+  optional bool toolchain_included = 37;
+  // If ExecReq contains toolchains as input, set toolchain spec.
+  // toolchain spec should contain all compiler related files except system
+  // shared objects which are expected to exist in the server side. For
+  // example, in `clang` case, recent `clang` binary usually contains
+  // everything, so it is OK to have just `clang`. In `pnacl-clang` case, it
+  // needs libLLVM.so, and since it is a compiler wrapper, it needs related
+  // python scripts etc.
+  // Currently, if `dimensions` is set correctly, we don't need to add
+  // shared objects in /lib or /usr/lib.
+  //
+  // toolchain_specs should contain compiler-driver (which is set in
+  // command_spec) and subprograms, too.
+  repeated ToolchainSpec toolchain_specs = 38;
+
+  reserved 99;
+}
+
+message MultiExecReq {
+  repeated ExecReq req = 1;
+
+  optional RequesterInfo requester_info = 10;
+}
+
+message ExecResp {
+  enum ExecError {
+    OK = 0;
+    BAD_REQUEST = -1;  // Non retryable error.
+  };
+  // Specifies the reason of ExecError::BAD_REQUEST.
+  enum BadRequestReasonCode {
+    // The reason is unknown (or not BAD_REQUEST)
+    UNKNOWN = 0;
+    // The request contains unsupported (e.g. blacklisted) compiler flags.
+    UNSUPPORTED_COMPILER_FLAGS = 1;
+  };
+  enum CacheSource {
+    NO_CACHE = 0;
+    MEM_CACHE = 1;
+    STORAGE_CACHE = 2;
+    LOCAL_OUTPUT_CACHE = 3;
+  };
+  optional ExecResult result = 1;
+  optional ExecError error = 2 [default=OK];
+  optional BadRequestReasonCode bad_request_reason_code = 3 [default=UNKNOWN];
+
+  repeated string missing_input = 11;  // filename
+  repeated string missing_reason = 15;  // reasons of missing_input.
+  repeated string error_message = 12;
+
+  optional bool force_store_output_file_for_unmatched_hash = 13
+      [default=false];
+  optional bool force_store_output_file_for_unmatched_version = 14
+      [default=false];
+  optional bool force_store_output_file_for_unmatched_subprograms = 16
+      [default=false];
+
+  // for trace
+  optional string cache_key = 21;  // result cache_key
+  optional CacheSource cache_hit = 27;
+  reserved 22, 23;
+
+  // requester's compiler_proxy_id.
+  // for cached resp, it is the original requester, not current requester.
+  optional string requester_compiler_proxy_id = 26;
+
+
+  // Time at compiler_proxy
+  optional double compiler_proxy_time = 50;
+  optional double compiler_proxy_include_preproc_time = 51;
+  optional double compiler_proxy_include_fileload_time = 52;
+  optional double compiler_proxy_rpc_call_time = 53;
+  optional double compiler_proxy_file_response_time = 54;
+  optional double compiler_proxy_rpc_build_time = 55;
+  optional double compiler_proxy_rpc_send_time = 56;
+  optional double compiler_proxy_rpc_wait_time = 57;
+  optional double compiler_proxy_rpc_recv_time = 58;
+  optional double compiler_proxy_rpc_parse_time = 59;
+
+  optional double compiler_proxy_local_pending_time = 60;
+  optional double compiler_proxy_local_run_time = 61;
+
+  optional bool compiler_proxy_goma_finished = 70;
+  optional bool compiler_proxy_goma_cache_hit = 71;
+  optional bool compiler_proxy_goma_aborted = 72;
+  optional bool compiler_proxy_goma_error = 73;
+  optional bool compiler_proxy_local_finished = 74;
+  optional bool compiler_proxy_local_run = 75;
+  optional bool compiler_proxy_local_killed = 76;
+
+  optional int32 compiler_proxy_exec_request_retry = 80;
+
+  // 99 was used in experimental phase.
+  reserved 99;
+}
+
+message MultiExecResp {
+  repeated group Response = 1 {
+    optional int32 response_code = 2;
+    optional ExecResp resp = 3;
+  }
+}
+
+// FileService Interface
+
+message StoreFileReq {
+  repeated FileBlob blob = 1;
+
+  optional RequesterInfo requester_info = 10;
+}
+
+message StoreFileResp {
+  repeated string hash_key = 1;  // sha256(blob) for success or "" for error
+}
+
+message LookupFileReq {
+  repeated string hash_key = 1;
+
+  optional RequesterInfo requester_info = 10;
+}
+
+message LookupFileResp {
+  repeated FileBlob blob = 2;
+}
+
+message EmptyMessage {
+}
+
+message HttpPortResponse {
+  required int32 port = 1;
+}

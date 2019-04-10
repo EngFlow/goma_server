@@ -1,0 +1,29 @@
+// Copyright 2018 The Goma Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+syntax = "proto2";
+
+import "api/goma_data.proto";
+
+package devtools_goma;
+
+option cc_generic_services = false;
+option java_generic_services = false;
+option py_generic_services = false;
+
+// TODO: reconsider good error codes.
+enum ExecServiceApplicationError {
+  BAD_REQUEST = -1;
+  EXEC_OK = 0;
+  EXECUTABLE_NOT_READY = 1;
+  DISK_EXCEEDED = 2;
+  EXEC_INTERNAL_ERROR = 3;
+  EXECUTOR_IS_LOADING = 4;
+  EXECUTOR_MEMORY_NOT_ENOUGH = 5;
+}
+
+service ExecService {
+  rpc Exec(ExecReq) returns (ExecResp) {
+  }
+}

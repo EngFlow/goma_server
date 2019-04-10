@@ -1,0 +1,21 @@
+// Copyright 2010 The Goma Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+//
+// goma file service API
+
+syntax = "proto2";
+
+import "api/goma_data.proto";
+
+package devtools_goma;
+
+option cc_generic_services = false;
+option java_generic_services = false;
+option py_generic_services = false;
+
+service FileService {
+  rpc StoreFile(StoreFileReq) returns (StoreFileResp) {}
+  rpc LookupFile(LookupFileReq) returns (LookupFileResp) {}
+}

@@ -1,0 +1,82 @@
+// Copyright 2018 The Goma Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+syntax = "proto3";
+
+package backend;
+
+message LocalBackend {
+  // address of exec server. default "exec-server:5050"
+  string exec_addr = 1;
+  // address of file server. default "file-server:5050"
+  string file_addr = 2;
+  // address of execlog server. default "execlog-server:5050"
+  string execlog_addr = 3;
+  bool enable_bytestream = 4;
+
+  // attributes for cloud tracing when handling this backend request.
+  message TraceOption {
+    string namespace = 1;
+    string cluster = 2;
+  };
+  TraceOption trace_option = 5;
+};
+
+message HttpRpcBackend {
+  // target URL (scheme + host).
+  // request query will be preserved.
+  // e.g. "https://clients5.google.com/cxx-compiler-service"
+  string target = 1;
+};
+
+message RemoteBackend {
+  // target address.
+  // e.g. "goma.endpoints.goma-dev.cloud.goog:443"
+  string address = 1;
+
+  // api_key to access the backend.
+  // it is used to read api_key value in api-keys volume.
+  string api_key_name = 2;
+};
+
+message BackendMapping {
+  // id of group that uses the backend.
+  // group id matches with group id in ACL if not empty.
+  // empty group id will be used as default backend.
+  string group_id = 1;
+
+  // backend selection by query parameters, encoded form sorted by key
+  // as same as https://golang.org/pkg/net/url/#Values.Encode
+  // if specified, this backend will be used if all query parameters
+  // matches with query_params.
+  // if query_params is empty, any requests will match.
+  //
+  // it is not used for default backend (empty group id). i.e.
+  // if group_id is empty, query_params must be empty.
+  string query_params = 4;
+
+  // backend for the group.
+  oneof backend {
+    HttpRpcBackend http_rpc = 2;
+    RemoteBackend remote = 3;
+  }
+}
+
+message BackendRule {
+  repeated BackendMapping backends = 1;
+}
+
+message BackendConfig {
+  oneof backend {
+    // for frontend in backend cluster.
+    LocalBackend local = 1;
+
+    // debug only.
+    HttpRpcBackend http_rpc = 2;
+    RemoteBackend remote = 3;
+
+    // for frontend-mixer
+    BackendRule rule = 4;
+  }
+};

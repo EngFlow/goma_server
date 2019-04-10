@@ -1,0 +1,266 @@
+// Copyright 2018 The Goma Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+syntax = "proto3";
+
+import "api/goma_data.proto";
+import "google/protobuf/timestamp.proto";
+
+package command;
+
+// Selector is a command selector.
+// it is used to select a compiler or a subprogram/plugin to run on
+// cmd_server by matching it with CommandSpec or SubprogramSpec in a request
+// from goma client.
+// a subprogram/plugin use name and binary_hash for matching.
+// basename of path in SubprogramSpec should match with name in Selector.
+// TODO: consider also using target.
+message Selector {
+  // command name.
+  // name is command base name without version number and architecture.
+  // i.e. it should be equivalent CompilerFlags::GetCompilerName.
+  // e.g. "gcc", "g++", "clang", "libFindBadConstructs.so",
+  // "libFindBadConstructs.dylib".
+  string name = 1;
+  // version. e.g. "4.4.3[Ubuntu 4.4.3-4ubuntu5]"
+  string version = 2;
+  // compiler's target machine. e.g. gcc -dumpmachine.
+  string target = 3;
+  // binary hash of the command (sha256, hexencoded)
+  string binary_hash = 4;
+}
+
+// FileSpec is a file metadata. content is identified by hash.
+// NEXT_ID_TO_USE: 9
+message FileSpec {
+  // path in client file system.
+  // may be relative.
+  // for cmd descriptor, it is relative to command binary directory.
+  // (e.g. /usr/bin for /usr/bin/gcc).
+  // for CmdReq, it is relative to working directory specified in cmd.Dir.
+  string path = 1;
+  int64 size = 2;
+  string hash = 3;  // hash is empty, if file is symlink, or dir.
+  bool is_executable = 4;
+  string symlink = 5;  // hash is empty.
+
+  // used for goma api.
+  string hash_key = 6;
+  devtools_goma.FileBlob blob = 7;
+
+  reserved 8;
+  // TODO: retention period?
+}
+
+// Target is a target address.
+message Target {
+  string addr = 1;
+  // TBD: dial option?
+}
+
+// BuildInfo is image build info.
+message BuildInfo {
+  // deprecated. use cmd_server instead.
+  reserved 1;
+  reserved "commit";
+  // who build this toolchain.
+  string creator = 2;
+  // hostname where the toolchain was built.
+  string hostname = 3;
+  // current working directory of toolchain build.
+  string directory = 4;
+  // when this toolchain was built.
+  google.protobuf.Timestamp timestamp = 5;
+
+  // deprecated. use toolchain instead.
+  reserved 6;
+  reserved "upstreams";
+
+  // full image name of cmd_server container.
+  string cmd_server = 7;
+  // full qualified toolchain name (separated by space)
+  string toolchain = 8;
+
+  // notify?
+}
+
+// CmdDescriptor is a command descriptor.
+// NEXT ID TO USE: 7
+message CmdDescriptor {
+  enum PathType {
+    UNKNOWN_PATH_TYPE = 0;
+    POSIX = 1;  // unix-style, slash separated.
+    WINDOWS = 2;  // windows-style. backslash separated.
+  }
+
+  Selector selector = 1;
+  // command binaries to run.
+  // it includes driver program (e.g. gcc), and subprograms
+  // (e.g. cc1, cc1plus, as, objcopy etc).
+  // note: shared objects in standard dirs (/lib, /usr/lib, etc)
+  // will be included in image, so no need to install in each run.
+  // shared objects specified by RPATH (i.e. $ORIGIN/../lib, e.g.
+  // libstdc++.so.6 in chromium-clang) should be specified in files below.
+  //
+  // path is represented in path type.
+  message Setup {
+    // If cmd_file.Path is abs path, then this command binary is installed
+    // in image at the path, and no need to setup. when run command, use
+    // this path instead of local_compiler_path.  files would be empty.
+    //
+    // If cmd_file.Path is relative path from cmd_dir, then this command
+    // binary is installed at local_compiler_path as cmd run setup.  files
+    // would be also installed.
+    FileSpec cmd_file = 1;
+    string cmd_dir = 2;
+    repeated FileSpec files = 3;  // relative to cmd path or absolute.
+
+    PathType path_type = 4;
+  }
+  Setup setup = 2;
+
+  // cross options (when user's platform and cmd_server's platform differs)
+  message Cross {
+    // If clang_need_target is true, exec_service adds -target <arch>
+    // in args if args does not have -target option.
+    // note: it is clang/clang++ specific.
+    bool clang_need_target = 1;
+
+    // TODO: implement followings.
+    // - needs path conversion
+    //   - nacl/win->linux
+    //   - pnacl/win->linux
+  }
+  Cross cross = 3;
+
+  // EmulationOpts is used when goma backend cannot fully emulate client environment.
+  message EmulationOpts {
+    // respect_client_include_paths is true if we need to append
+    // include directories sent from goma client to command line.
+    // For example, when we choose a binary is not relocatable, we need to
+    // specify -isystem, -imsvc (or equivalent)
+    bool respect_client_include_paths = 1;
+  }
+  EmulationOpts emulation_opts = 6;
+
+  reserved 4, 5;
+  reserved "cmd_opts", "package_opt";
+
+  // other options?
+  // TODO: more data to describe command (used in exec.Service).
+}
+
+// RemoteexecPlatform is a set of requirements, such as hardware,
+// operating system, for an remoteexec API.
+message RemoteexecPlatform {
+  message Property {
+    // The property name.
+    string name = 1;
+    // The property value.
+    string value = 2;
+  }
+
+  repeated Property properties = 1;
+
+  // Basename of RBE instance to use. e.g. "default_instance" or "windows".
+  string rbe_instance_basename = 2;
+}
+
+// Config is a command config; mapping from selector.
+message Config {
+  Target   target = 1;
+  reserved 2;
+  reserved "image";
+  BuildInfo build_info = 3;
+  CmdDescriptor cmd_descriptor = 4;
+  RemoteexecPlatform remoteexec_platform = 5;
+
+  // If this config is configured for arbitrary toolchain support,
+  // set dimensions of the config. Otherwise, this should be nil.
+  repeated string dimensions = 6;
+}
+
+// Platform is a set of requirements, such as haredware, operting system
+// for RBE backend.
+// matched with build.bazel.remote.execution.v2.Platform.
+message Platform {
+  message Property {
+    string name = 1;
+    string value = 2;
+  }
+  repeated Property properties = 1;
+}
+
+// RuntimeConfig is config for runtime.
+// NEXT ID TO USE: 9
+message RuntimeConfig {
+  // name of runtime.
+  //
+  // if this runtime config found in a bucket,
+  // the following files will be detected in this name directory in the bucket:
+  //   seq
+  //   <prebuilt-item>/descriptors/<descriptorHash>
+  //   remoteexec-platform/<property-name>
+  string name = 1;
+
+  // service address for the runtime. i.e. RBE address.
+  string service_addr = 2;
+
+  // If not nil, this runtime config will be also configured
+  // for arbitrary toolchain support.
+  // This is selector to use this runtime. i.e. if client request contains
+  // the dimentions, this runtime config will be selected.
+  PlatformRuntimeConfig platform_runtime_config = 6;
+
+  // Basename of RBE instance to use. e.g. "default_instance" or "windows".
+  string rbe_instance_basename = 7;
+
+  // Platform is a set of requirements, such as haredware, operting system
+  // for RBE backend.
+  // property files stored in remoteexec-platform/ in the bucket will be
+  // merged into this.
+  Platform platform = 8;
+
+  // go/goma-toolchain-filter-per-cluster
+  // prefix of prebuilts in the runtime.
+  // disallowed takes precedence over allowed.
+
+  // prebuilts prefix to allow.
+  // if allowed_prebuilts specified, only prebuilts that are matched
+  // by allowed_prebuilts is allowed. other prebuilts are disallowed.
+  // if no allowed_prebuilts specified, any prebuilts are allowed
+  // if it is not disallowed by disallowed_prebuilts.
+  repeated string allowed_prebuilts = 3;
+
+  // prebuilts prefix to disallow.
+  // if no disallowed_prebuilts specified, only allowed_prebuilts is used.
+  // if both are not specified, all prebuilts are allowed.
+  repeated string disallowed_prebuilts = 4;
+
+  // commands that is disallowed in the runtime.
+  // selector field is used for exact match, if it is specified.
+  // selector field that is not specified in disallowed_commands will
+  // match any selector.
+  repeated Selector disallowed_commands = 5;
+}
+
+// PlatformRuntimeConfig is a config to use the runtime.
+// NEXT ID TO USE: 2
+message PlatformRuntimeConfig {
+  repeated string dimensions = 1;
+}
+
+// ConfigMap is a config map; data source of Config.
+// admin creates/updates the file in <bucket>/<config>.config
+// and ConfigMapBucket will read the info.
+message ConfigMap {
+  repeated RuntimeConfig runtimes = 1;
+}
+
+
+// TODO: remove ConfigResp.
+message ConfigResp {
+  string version_id = 2;
+  repeated Config configs = 1;
+}

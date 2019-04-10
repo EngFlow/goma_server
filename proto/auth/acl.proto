@@ -1,0 +1,43 @@
+// Copyright 2018 The Goma Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+syntax = "proto3";
+
+package auth;
+
+// Simple ACL.
+// https://docs.google.com/document/d/1xv8M0WqQyAanj-fM5Rv3wOMEis06HRwVEFLXjINOwC0/edit
+
+// Group defines a group of users that shares the same service account.
+// Different groups may share a service account.
+message Group {
+  string id = 1;
+  string description = 2;
+
+  // if audience is not empty, group member should have this audience
+  // in the token.
+  string audience = 3;
+
+  // matches mail in the token.
+  repeated string emails = 4;
+  // matches domain part of email in the token.
+  repeated string domains = 5;
+  // if both emails and domains are not specified, use id as external group id
+  // and check membership with external authentication database if given.
+
+  // use this service account for this group.
+  // it is used to read json in service-accounts volume.
+  // If service_account is "default", use server's default service account.
+  // If service_account is empty, pass EUC as is.
+  string service_account = 6;
+
+  // If reject is true, deny access from this group.
+  // Used for blacklisting.
+  bool reject = 7;
+}
+
+message ACL {
+  // First matched group will be used.
+  repeated Group groups = 1;
+}
