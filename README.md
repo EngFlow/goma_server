@@ -20,15 +20,18 @@ implementations with some minor tweaks to the service code.
 
 To learn more about Remote Build Execution, which is currently an alpha service,
 you can view the whitelisted documentation by joining
-[this group](https://groups.google.com/forum/#!forum/rbe-alpha-customers). 
-Remote Build Execution instructions are coming soon.
+[this group](https://groups.google.com/forum/#!forum/rbe-alpha-customers).
+If you would like to try using Goma with Remote Build Execution, you can follow
+[these instructions](https://cloud.google.com/remote-build-execution/docs/tutorial-using-goma-with-rbe).
+(note: you must join the documentation whitelist group to view the
+instructions).
 
 ## How to build
 
 Goma server can be built on Linux.
 
 ```
-$ go get go.chromium.org/goma/server/cmd/remoteexec_proxy
+$ GO111MODULE=on go get go.chromium.org/goma/server/cmd/remoteexec_proxy
 ```
 
 You will get the binary in `$(go env GOPATH)/bin`.
