@@ -524,11 +524,11 @@ func splitGCSPath(uri string) (string, string, error) {
 func storageReadAll(ctx context.Context, client stiface.Client, bucket, name string) ([]byte, error) {
 	bkt := client.Bucket(bucket)
 	if bkt == nil {
-		return nil, fmt.Errorf("Could not find bucket %s", bucket)
+		return nil, fmt.Errorf("could not find bucket %s", bucket)
 	}
 	obj := bkt.Object(name)
 	if obj == nil {
-		return nil, fmt.Errorf("Could not find object %s/%s", bucket, name)
+		return nil, fmt.Errorf("could not find object %s/%s", bucket, name)
 	}
 	rd, err := obj.NewReader(ctx)
 	if err != nil {
@@ -567,7 +567,7 @@ func loadRemoteexecPlatform(ctx context.Context, client stiface.Client, uri stri
 
 	bkt := client.Bucket(bucket)
 	if bkt == nil {
-		return nil, fmt.Errorf("Could not find storage bucket %s", bucket)
+		return nil, fmt.Errorf("could not find storage bucket %s", bucket)
 	}
 	iter := bkt.Objects(ctx, &storage.Query{
 		Prefix: obj,
@@ -655,7 +655,7 @@ func loadConfigs(ctx context.Context, client stiface.Client, uri string, rc *cmd
 
 	bkt := client.Bucket(bucket)
 	if bkt == nil {
-		return nil, fmt.Errorf("Could not find storage bucket %s", bucket)
+		return nil, fmt.Errorf("could not find storage bucket %s", bucket)
 	}
 	iter := bkt.Objects(ctx, &storage.Query{
 		Prefix: obj,

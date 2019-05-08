@@ -3,7 +3,7 @@
 package digest
 
 import (
-	rpb "go.chromium.org/goma/server/proto/remote-apis/build/bazel/remote/execution/v2"
+	rpb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 )
 
 type digestKey struct {

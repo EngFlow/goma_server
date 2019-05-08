@@ -19,6 +19,10 @@ type FilePath interface {
 	// IsAbs reports whether the path is absolute.
 	IsAbs(path string) bool
 
+	// Base returns the last element of path, typically
+	// the filename.
+	Base(string) string
+
 	// Dir returns all but the last element of path, typically
 	// the path's directory.
 	// Different filepath.Dir, it won't clean "..".
@@ -37,6 +41,9 @@ type FilePath interface {
 
 	// SplitElem splits path by path separator.
 	SplitElem(path string) []string
+
+	// PathSep returns the path separator.
+	PathSep() string
 }
 
 // FilePathOf returns FilePath of path type.

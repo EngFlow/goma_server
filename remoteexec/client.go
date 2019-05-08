@@ -8,7 +8,7 @@ import (
 	"context"
 	"time"
 
-	rpb "go.chromium.org/goma/server/proto/remote-apis/build/bazel/remote/execution/v2"
+	rpb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
@@ -149,6 +149,20 @@ func (c Client) GetCapabilities(ctx context.Context, req *rpb.GetCapabilitiesReq
 	return rpb.NewCapabilitiesClient(c.ClientConn).GetCapabilities(ctx, req, c.callOptions(opts...)...)
 }
 
+func logOpMetadata(logger log.Logger, op *lpb.Operation) {
+	if op.GetMetadata() == nil {
+		logger.Infof("operation update: no metadata")
+		return
+	}
+	md := &rpb.ExecuteOperationMetadata{}
+	err := ptypes.UnmarshalAny(op.GetMetadata(), md)
+	if err != nil {
+		logger.Warnf("operation update: %s: metadata bad type %T: %v", op.GetName(), op.GetMetadata(), err)
+		return
+	}
+	logger.Infof("operation update: %s: %v", op.GetName(), md)
+}
+
 // ExecuteAndWait executes and action remotely and wait its response.
 // it returns operation name, response and error.
 func ExecuteAndWait(ctx context.Context, c Client, req *rpb.ExecuteRequest, opts ...grpc.CallOption) (string, *rpb.ExecuteResponse, error) {
@@ -199,13 +213,7 @@ func ExecuteAndWait(ctx context.Context, c Client, req *rpb.ExecuteRequest, opts
 				logger.Infof("operation starts: %s", opName)
 			}
 			if !op.GetDone() {
-				md := &rpb.ExecuteOperationMetadata{}
-				err = ptypes.UnmarshalAny(op.GetMetadata(), md)
-				if err != nil {
-					logger.Warnf("operation update: %s: metadata bad type %T: %v", op.GetName(), op.GetMetadata(), err)
-				} else {
-					logger.Infof("operation update: %s: %v", op.GetName(), md)
-				}
+				logOpMetadata(logger, op)
 				waitReq = &rpb.WaitExecutionRequest{
 					Name: opName,
 				}

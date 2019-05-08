@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	rpb "go.chromium.org/goma/server/proto/remote-apis/build/bazel/remote/execution/v2"
+	rpb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
@@ -58,16 +58,20 @@ type request struct {
 	action       *rpb.Action
 	actionDigest *rpb.Digest
 
+	needOverlay bool
+
 	err error
 }
 
 type clientFilePath interface {
 	IsAbs(path string) bool
+	Base(path string) string
 	Dir(path string) string
 	Join(elem ...string) string
 	Rel(basepath, targpath string) (string, error)
 	Clean(path string) string
 	SplitElem(path string) []string
+	PathSep() string
 }
 
 func doNotCache(req *gomapb.ExecReq) bool {
@@ -230,7 +234,7 @@ func (r *request) newInputTree(ctx context.Context) *gomapb.ExecResp {
 		r.gomaResp.ErrorMessage = append(r.gomaResp.ErrorMessage, fmt.Sprintf("bad input: %v", err))
 		return r.gomaResp
 	}
-	rootDir, err := inputRootDir(r.filepath, inputPaths)
+	rootDir, needOverlay, err := inputRootDir(r.filepath, inputPaths, false)
 	if err != nil {
 		logger.Errorf("input root detection failed: %v", err)
 		logFileList(logger, "input paths", inputPaths)
@@ -239,6 +243,7 @@ func (r *request) newInputTree(ctx context.Context) *gomapb.ExecResp {
 		return r.gomaResp
 	}
 	r.tree = merkletree.New(r.filepath, rootDir, r.digestStore)
+	r.needOverlay = needOverlay
 
 	logger.Infof("new input tree cwd:%s root:%s %s", r.gomaReq.GetCwd(), r.tree.RootDir(), r.cmdConfig.GetCmdDescriptor().GetSetup().GetPathType())
 	gi := gomaInput{
@@ -581,23 +586,33 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 		wd = "."
 	}
 	envs := []string{fmt.Sprintf("WORK_DIR=%s", wd)}
-	var data digest.Data
-	wrapperName := ""
+
+	// The developer of this program can make multiple wrapper scripts
+	// to be used by adding wrapperDesc instances to `wrappers`.
+	// However, only the first one is called in the command line.
+	// The other scripts should be called from the first wrapper script.
+	type wrapperDesc struct {
+		name string
+		data digest.Data
+	}
+	var wrappers []wrapperDesc
+
 	args := buildArgs(ctx, cmdConfig, argv0, r.gomaReq)
 
 	pathType := cmdConfig.GetCmdDescriptor().GetSetup().GetPathType()
 	switch pathType {
 	case cmdpb.CmdDescriptor_POSIX:
+		var d digest.Data
 		err = cwdAgnosticReq(ctx, cmdConfig, r.filepath, r.gomaReq.Arg, r.gomaReq.Env)
 		if err != nil {
 			logger.Infof("non cwd agnostic: %v", err)
-			data = digest.Bytes("wrapper-script", []byte(wrapperScript))
+			d = digest.Bytes("wrapper-script", []byte(wrapperScript))
 			envs = append(envs, fmt.Sprintf("INPUT_ROOT_DIR=%s", r.tree.RootDir()))
 			envs = append(envs, r.gomaReq.Env...)
 			r.addPlatformProperty(ctx, "dockerSiblingContainers", "true")
 		} else {
 			logger.Infof("cwd agnostic")
-			data = digest.Bytes("cwd-agnostic-wrapper-script", []byte(cwdAgnosticWrapperScript))
+			d = digest.Bytes("cwd-agnostic-wrapper-script", []byte(cwdAgnosticWrapperScript))
 			for _, e := range r.gomaReq.Env {
 				if strings.HasPrefix(e, "PWD=") {
 					// PWD is usually absolute path.
@@ -608,36 +623,61 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 				envs = append(envs, e)
 			}
 		}
-		wrapperName = "run.sh"
+		wrappers = []wrapperDesc{
+			{
+				name: "run.sh",
+				data: d,
+			},
+		}
 
 	case cmdpb.CmdDescriptor_WINDOWS:
-		wrapperName, data, err = wrapperForWindows(ctx)
+		wn, data, err := wrapperForWindows(ctx)
+		if err != nil {
+			return err
+		}
+		wrappers = []wrapperDesc{
+			{
+				name: wn,
+				data: data,
+			},
+		}
+
+	default:
+		return fmt.Errorf("bad path type: %v", pathType)
+	}
+
+	// Only the first one is called in the command line via storing
+	// `wrapperPath` in `r.args` later.
+	wrapperPath := ""
+	for i, w := range wrappers {
+		wp, err := rootRel(r.filepath, w.name, r.gomaReq.GetCwd(), r.tree.RootDir())
 		if err != nil {
 			return err
 		}
 
-	default:
-		return fmt.Errorf("Bad path type: %v", pathType)
+		logger.Infof("wrapper (%d) %s => %v", i, wp, w.data.Digest())
+		r.tree.Set(merkletree.Entry{
+			Name:         wp,
+			Data:         w.data,
+			IsExecutable: true,
+		})
+		if wrapperPath == "" {
+			wrapperPath = wp
+		}
 	}
-
-	wrapperPath, err := rootRel(r.filepath, wrapperName, r.gomaReq.GetCwd(), r.tree.RootDir())
-	if err != nil {
-		return err
-	}
-
-	logger.Infof("wrapper %s => %v", wrapperPath, data.Digest())
-	r.tree.Set(merkletree.Entry{
-		Name:         wrapperPath,
-		Data:         data,
-		IsExecutable: true,
-	})
 
 	r.envs = envs
 
-	// if run.sh exists in cwd, `wrapper` is resolved as run.sh. However,
-	// it cannot be callable. It should be like ./run.sh
-	if wrapperPath == "run.sh" {
-		wrapperPath = "./run.sh"
+	// if a wrapper exists in cwd, `wrapper` does not have a directory name.
+	// It cannot be callable on POSIX because POSIX do not contain "." in
+	// its PATH.  Although "." is included in PATH on Windows, there can be
+	// a risk unexpected scripts with the same name would be called.
+	// Let's avoid the situation with explicitly specifying the directory
+	// name i.e. ".".
+	if r.filepath.Base(wrapperPath) == wrapperPath {
+		// Since Join omit "." and this is only the case Join must not
+		// omit ".", we need to join by ourselves here.
+		wrapperPath = "." + r.filepath.PathSep() + wrapperPath
 	}
 	r.args = append([]string{wrapperPath}, args...)
 	return nil

@@ -14,6 +14,7 @@ import (
 type FilePath struct{}
 
 func (FilePath) IsAbs(path string) bool     { return IsAbs(path) }
+func (FilePath) Base(path string) string    { return Base(path) }
 func (FilePath) Dir(path string) string     { return Dir(path) }
 func (FilePath) Join(elem ...string) string { return Join(elem...) }
 
@@ -23,6 +24,7 @@ func (FilePath) Rel(basepath, targpath string) (string, error) {
 
 func (FilePath) Clean(path string) string       { return Clean(path) }
 func (FilePath) SplitElem(path string) []string { return SplitElem(path) }
+func (FilePath) PathSep() string                { return "/" }
 
 // IsAbs returns true if fname is absolute path.
 func IsAbs(fname string) bool {

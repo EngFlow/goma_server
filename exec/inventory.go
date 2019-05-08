@@ -6,6 +6,7 @@ package exec
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -473,7 +474,7 @@ func (in *Inventory) pickFromExecReq(ctx context.Context, req *gomapb.ExecReq, r
 	if len(dimensions) == 0 {
 		resp.Error = gomapb.ExecResp_BAD_REQUEST.Enum()
 		resp.ErrorMessage = append(resp.ErrorMessage, "No dimensions are specified")
-		return nil, nil, fmt.Errorf("No dimensions are specified")
+		return nil, nil, errors.New("no dimensions are specified")
 	}
 
 	// Select the best possible platform. If there is multiple possible platforms,
@@ -492,10 +493,17 @@ func (in *Inventory) pickFromExecReq(ctx context.Context, req *gomapb.ExecReq, r
 		return nil, nil, fmt.Errorf("possible platform not found in inventory: dimensions=%v", dimensions)
 	}
 
+	cmdSel, _, err := fromCommandSpec(req.GetCommandSpec())
+	if err != nil {
+		resp.Error = gomapb.ExecResp_BAD_REQUEST.Enum()
+		return nil, nil, fmt.Errorf("normalize %v: %v", req.GetCommandSpec(), err)
+	}
+
 	// Dynamically generate cmdpb.Config here.
 	cfg := &cmdpb.Config{
 		RemoteexecPlatform: matchedConfig.remoteexecPlatform,
 		CmdDescriptor: &cmdpb.CmdDescriptor{
+			Selector: cmdSel.Proto(),
 			Setup: &cmdpb.CmdDescriptor_Setup{
 				PathType: pathTypeFromPathStyle(req.GetRequesterInfo().GetPathStyle()),
 			},

@@ -11,6 +11,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -19,7 +20,7 @@ import (
 	"path"
 	"time"
 
-	rpb "go.chromium.org/goma/server/proto/remote-apis/build/bazel/remote/execution/v2"
+	rpb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 
 	"cloud.google.com/go/pubsub"
 	"cloud.google.com/go/storage"
@@ -184,7 +185,7 @@ func newConfigServer(ctx context.Context, inventory *exec.Inventory, uri string,
 	if *pubsubProjectID == "" {
 		*pubsubProjectID = server.ProjectID(ctx)
 		if *pubsubProjectID == "" {
-			return nil, fmt.Errorf("--pubsub-project-id must be set")
+			return nil, errors.New("--pubsub-project-id must be set")
 		}
 	}
 	var err error

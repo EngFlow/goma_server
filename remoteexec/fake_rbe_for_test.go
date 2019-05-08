@@ -15,8 +15,8 @@ import (
 	"strings"
 	"sync"
 
-	rpb "go.chromium.org/goma/server/proto/remote-apis/build/bazel/remote/execution/v2"
-	sempb "go.chromium.org/goma/server/proto/remote-apis/build/bazel/semver"
+	rpb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
+	sempb "github.com/bazelbuild/remote-apis/build/bazel/semver"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"

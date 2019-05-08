@@ -6,6 +6,7 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -29,7 +30,7 @@ func AddrFromEnv() (string, error) {
 	host := os.Getenv("REDISHOST")
 	port := os.Getenv("REDISPORT")
 	if host == "" {
-		return "", fmt.Errorf("no REDISHOST environment")
+		return "", errors.New("no REDISHOST environment")
 	}
 	if port == "" {
 		port = "6379" // redis default port

@@ -20,11 +20,14 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"os/signal"
 	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -40,8 +43,9 @@ import (
 var (
 	dataSourceDir = flag.String("data_source_dir", gomaTmpDir(), "data source directory")
 
-	repeat = flag.Int("n", 1, "N repeat request")
-	limit  = flag.Int("l", 1, "limit at most N request")
+	repeat  = flag.Int("n", 1, "N repeat request")
+	limit   = flag.Int("l", 1, "limit at most N request")
+	buildID = flag.String("build_id", "", "overrides build_id")
 
 	asInternal = flag.Bool("as_internal", true, "use oauth2 for internal client")
 	verbose    = flag.Bool("v", false, "verbose flag")
@@ -87,8 +91,12 @@ func loadRequestData(ctx context.Context, dir string) ([]*gomapb.ExecReq, error)
 			return fmt.Errorf("%s: %v", path, err)
 		}
 		clearInputs(req)
+		if *buildID != "" {
+			req.GetRequesterInfo().BuildId = proto.String(*buildID)
+		}
 		reqs = append(reqs, req)
-		fmt.Println("use ", path)
+		fmt.Printf("req[%d]=%s\n", len(reqs)-1, path)
+		logger.Debugf("req[%d]=%s", len(reqs)-1, req)
 		return nil
 	})
 	logger.Infof("loaded %d req(s): err=%v", len(reqs), err)
@@ -258,34 +266,101 @@ func main() {
 	if err != nil {
 		fatalf("request data: %v", err)
 	}
+	if *buildID != "" {
+		fmt.Println("build_id:", *buildID)
+	}
+
+	sigch := make(chan os.Signal, 1)
+	signal.Notify(sigch, syscall.SIGTERM, syscall.SIGINT)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		for {
+			<-sigch
+			fmt.Println("interrupted")
+			if ctx.Err() != nil {
+				fmt.Println("interrupted again. exiting...")
+				os.Exit(1)
+			}
+			cancel()
+		}
+	}()
 
 	t0 := time.Now()
 	var wg sync.WaitGroup
-	sema := make(chan bool, *limit)
-	for i, req := range reqs {
-		for j := 0; j < *repeat; j++ {
-			wg.Add(1)
-			go func(i int, req *gomapb.ExecReq) {
-				defer wg.Done()
+	nreq, nrep := len(reqs), *repeat
+	// atomic counters
+	var (
+		running, finished int32
+		httpErrors        int32
+		gomaExecErrors    int32
+		gomaMissingInputs int32
+		gomaOtherErrors   int32
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		sema := make(chan bool, *limit)
+	Loop:
+		for i, req := range reqs {
+			for j := 0; j < *repeat; j++ {
+				if ctx.Err() != nil {
+					nreq = i
+					nrep = j
+					break Loop
+				}
+				wg.Add(1)
 				sema <- true
-				defer func() {
-					<-sema
-				}()
-				resp := &gomapb.ExecResp{}
-				t := time.Now()
-				err = httprpc.Call(ctx, c, targ.String(), req, resp)
-				if err != nil {
-					errorf("req[%d] %v", i, err)
-				}
-				if e := resp.GetError(); e != gomapb.ExecResp_OK {
-					errorf("req[%d] ExecError %s", e)
-					logger.Debugf("%s", resp)
-				}
-
-				logger.Infof("req[%d] %s %s", i, resp.GetError(), time.Since(t))
-			}(i, req)
+				go func(i, j int, req *gomapb.ExecReq) {
+					defer wg.Done()
+					defer func() {
+						atomic.AddInt32(&running, -1)
+						atomic.AddInt32(&finished, 1)
+						<-sema
+					}()
+					atomic.AddInt32(&running, 1)
+					resp := &gomapb.ExecResp{}
+					t := time.Now()
+					err = httprpc.Call(ctx, c, targ.String(), req, resp)
+					if err != nil {
+						if ctx.Err() != nil {
+							return
+						}
+						atomic.AddInt32(&httpErrors, 1)
+						errorf("req[%d]%d %v", i, j, err)
+					}
+					if e := resp.GetError(); e != gomapb.ExecResp_OK {
+						atomic.AddInt32(&gomaExecErrors, 1)
+						errorf("req[%d]%d ExecError %s %s", i, j, e, time.Since(t))
+						logger.Debugf("%s", resp)
+					}
+					if len(resp.MissingInput) > 0 {
+						atomic.AddInt32(&gomaMissingInputs, 1)
+						errorf("req[%d]%d missing inputs=%d %s", i, j, len(resp.MissingInput), time.Since(t))
+					}
+					if len(resp.ErrorMessage) > 0 {
+						atomic.AddInt32(&gomaOtherErrors, 1)
+						errorf("req[%d]%d error %q %s", i, j, resp.ErrorMessage, time.Since(t))
+					}
+					logger.Infof("req[%d]%d %s %s", i, j, resp.GetError(), time.Since(t))
+				}(i, j, req)
+				fmt.Printf("req[%d]%d/%d %d/%d error %d/%d/%d/%d %s\r", i, j, *repeat,
+					atomic.LoadInt32(&running),
+					atomic.LoadInt32(&finished),
+					atomic.LoadInt32(&httpErrors),
+					atomic.LoadInt32(&gomaExecErrors),
+					atomic.LoadInt32(&gomaMissingInputs),
+					atomic.LoadInt32(&gomaOtherErrors),
+					time.Since(t0))
+			}
 		}
-	}
+	}()
 	wg.Wait()
-	fmt.Printf("%s %d reqs * %d (limit:%d) in %s\n", targ, len(reqs), *repeat, *limit, time.Since(t0))
+	fmt.Printf("%s %d/%d reqs * %d/%d (limit:%d) finished=%d error http=%d/exec=%d/missing=%d/other=%d in %s\n", targ, nreq, len(reqs), nrep, *repeat, *limit,
+		atomic.LoadInt32(&finished),
+		atomic.LoadInt32(&httpErrors),
+		atomic.LoadInt32(&gomaExecErrors),
+		atomic.LoadInt32(&gomaMissingInputs),
+		atomic.LoadInt32(&gomaOtherErrors),
+		time.Since(t0))
 }

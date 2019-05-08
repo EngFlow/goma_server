@@ -5,6 +5,7 @@
 package remoteexec
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/golang/protobuf/proto"
@@ -13,14 +14,90 @@ import (
 	gomapb "go.chromium.org/goma/server/proto/api"
 )
 
+func TestGetPathsWithNoCommonDir(t *testing.T) {
+	for _, tc := range []struct {
+		desc  string
+		paths []string
+		want  []string
+	}{
+		{
+			desc: "empty",
+			// paths: nil,
+			// want:  nil,
+		},
+		{
+			desc:  "single",
+			paths: []string{"/foo"},
+			// want:  nil,
+		},
+		{
+			desc: "has common dir",
+			paths: []string{
+				"/foo/bar1",
+				"/foo/local/bar2",
+				"/foo/bar3",
+			},
+			// want: nil,
+		},
+		{
+			desc: "no common dir #0",
+			paths: []string{
+				"/foo",
+				"/goo/local/baz",
+				"/goo/",
+				"/foo/local/bar2",
+				"/foo/bar3",
+			},
+			want: []string{
+				"/foo",
+				"/goo/local/baz",
+			},
+		},
+		{
+			desc: "no common dir #1",
+			paths: []string{
+				"/foo/local/bar2",
+				"/foo",
+				"/goo/",
+				"/goo/local/baz",
+				"/foo/bar3",
+			},
+			want: []string{
+				"/foo/local/bar2",
+				"/goo/",
+			},
+		},
+		{
+			desc: "no common dir #2",
+			paths: []string{
+				"/goo",
+				"/bar",
+				"/baz/",
+				"/foo",
+			},
+			want: []string{
+				"/goo",
+				"/bar",
+			},
+		},
+	} {
+		got := getPathsWithNoCommonDir(posixpath.FilePath{}, tc.paths)
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("test case %s: getPathsWithNoCommonDir(paths=%v)=%v; want %v", tc.desc, tc.paths, got, tc.want)
+		}
+	}
+}
+
 func TestInputRootDir(t *testing.T) {
 	for _, tc := range []struct {
-		desc        string
-		req         *gomapb.ExecReq
-		argv0       string
-		want        string
-		wantPathErr bool
-		wantRootErr bool
+		desc         string
+		req          *gomapb.ExecReq
+		argv0        string
+		allowOverlay bool
+		want         string
+		wantOverlay  bool
+		wantPathErr  bool
+		wantRootErr  bool
 	}{
 		{
 			desc: "basic",
@@ -174,6 +251,21 @@ func TestInputRootDir(t *testing.T) {
 			argv0:       "../../third_party/llvm-build/Release+Asserts/bin/clang++",
 			wantRootErr: true,
 		},
+		{
+			desc: "wantOverlay for /usr",
+			req: &gomapb.ExecReq{
+				Cwd: proto.String("/home/foo/src/out/Release"),
+				Input: []*gomapb.ExecReq_Input{
+					&gomapb.ExecReq_Input{
+						Filename: proto.String("/usr/include/config.h"),
+					},
+				},
+			},
+			argv0:        "../../third_party/llvm-build/Release+Asserts/bin/clang++",
+			want:         "/",
+			allowOverlay: true,
+			wantOverlay:  true,
+		},
 	} {
 		t.Logf("test case: %s", tc.desc)
 		paths, err := inputPaths(posixpath.FilePath{}, tc.req, tc.argv0)
@@ -186,15 +278,15 @@ func TestInputRootDir(t *testing.T) {
 		if err != nil {
 			t.Errorf("inputPaths(req, %q)=%v, %v; want nil error", tc.argv0, paths, err)
 		}
-		got, err := inputRootDir(posixpath.FilePath{}, paths)
+		got, overlay, err := inputRootDir(posixpath.FilePath{}, paths, tc.allowOverlay)
 		if tc.wantRootErr {
 			if err == nil {
-				t.Errorf("inputRootDir(files)=%v, nil; want err", got)
+				t.Errorf("inputRootDir(files)=%v, %t, nil; want err", got, overlay)
 			}
 			continue
 		}
-		if err != nil || got != tc.want {
-			t.Errorf("inputRootDir(files)=%v, %v; want %v, nil", got, err, tc.want)
+		if err != nil || got != tc.want || overlay != tc.wantOverlay {
+			t.Errorf("inputRootDir(files)=%v, %t, %v; want %v, %t, nil", got, overlay, err, tc.want, tc.wantOverlay)
 		}
 	}
 }
@@ -269,6 +361,125 @@ func TestRootRel(t *testing.T) {
 		}
 		if err != nil || got != tc.want {
 			t.Errorf("rootRel(posixpath.FilePath, %q, %q, %q)=%q, %v; want %q, nil", tc.fname, tc.cwd, tc.rootDir, got, err, tc.want)
+		}
+	}
+}
+
+func TestHasPrefixDir(t *testing.T) {
+	for _, tc := range []struct {
+		p, prefix string
+		want      bool
+	}{
+		{
+			p:      "/home/foo/bar",
+			prefix: "/home/foo",
+			want:   true,
+		},
+		{
+			p:      "/home/foo",
+			prefix: "/home/foo",
+			want:   true,
+		},
+		{
+			p:      "/home/foo/",
+			prefix: "/home/foo",
+			want:   true,
+		},
+		// hasPrefixDir trim "/" in `prefix`
+		{
+			p:      "/home/foo",
+			prefix: "/home/foo////////////////",
+			want:   true,
+		},
+		{
+			p:      "/foo",
+			prefix: "/bar",
+			want:   false,
+		},
+		{
+			p:      "/foo/bar",
+			prefix: "/bar",
+			want:   false,
+		},
+		{
+			p:      "/foo",
+			prefix: "/bar/baz",
+			want:   false,
+		},
+		{
+			p:      "/foo",
+			prefix: "/foo/bar",
+			want:   false,
+		},
+		{
+			p:      "/home/foobar",
+			prefix: "/home/foo",
+			want:   false,
+		},
+
+		{
+			p:      "home/foo",
+			prefix: "home/foo",
+			want:   true,
+		},
+		{
+			p:      "home/foo/bar",
+			prefix: "home/foo",
+			want:   true,
+		},
+	} {
+		got := hasPrefixDir(tc.p, tc.prefix)
+		if got != tc.want {
+			t.Errorf("hasPrefixDir(%s,%s) = %t; want %t", tc.p, tc.prefix, got, tc.want)
+		}
+	}
+}
+
+func TestVerifyPathsForOverlay(t *testing.T) {
+	for _, tc := range []struct {
+		paths     []string
+		wantError bool
+	}{
+		{
+			paths:     []string{"/home/foo/"},
+			wantError: false,
+		},
+		{
+			paths:     []string{"/bin/sh"},
+			wantError: true,
+		},
+		{
+			paths:     []string{"/sbin/shutdown"},
+			wantError: true,
+		},
+		{
+			paths:     []string{"/lib/libc.so.6"},
+			wantError: true,
+		},
+		{
+			paths:     []string{"/lib64/ld-linux-x86-64.so.2"},
+			wantError: true,
+		},
+		{
+			paths:     []string{"/dev/urandom"},
+			wantError: true,
+		},
+		{
+			paths:     []string{"/workdir"},
+			wantError: true,
+		},
+		// has non-blacklist and blacklist.
+		{
+			paths:     []string{"/home", "/workdir"},
+			wantError: true,
+		},
+	} {
+		err := verifyPathsForOverlay(tc.paths)
+		if err == nil && tc.wantError {
+			t.Errorf("verifyPathsForOverlay(%q) = nil; want error", tc.paths)
+		}
+		if err != nil && !tc.wantError {
+			t.Errorf("verifyPathsForOverlay(%q) = %v; want nil", tc.paths, err)
 		}
 	}
 }

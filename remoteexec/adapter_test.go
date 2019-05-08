@@ -14,16 +14,16 @@ import (
 	"testing"
 	"time"
 
+	rpb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 	"github.com/golang/protobuf/proto"
 	"github.com/google/go-cmp/cmp"
 	bpb "google.golang.org/genproto/googleapis/bytestream"
 
-	"go.chromium.org/goma/server/log"
 	gomapb "go.chromium.org/goma/server/proto/api"
 	cmdpb "go.chromium.org/goma/server/proto/command"
 	fpb "go.chromium.org/goma/server/proto/file"
-	rpb "go.chromium.org/goma/server/proto/remote-apis/build/bazel/remote/execution/v2"
 	"go.chromium.org/goma/server/remoteexec/cas"
+	"go.chromium.org/goma/server/remoteexec/digest"
 )
 
 func TestAdapterHandleMissingCompiler(t *testing.T) {
@@ -561,15 +561,15 @@ func TestAdapterHandleCrossCompile(t *testing.T) {
 }
 
 type fileState struct {
+	digest       *rpb.Digest
 	isFile       bool
 	isDir        bool
 	isExecutable bool
 }
 
 // TODO: implement this with GetTree?
-func dumpDirIter(ctx context.Context, bs bpb.ByteStreamClient, instance, dir string, d *rpb.Digest, files map[string]fileState) error {
-	logger := log.FromContext(ctx)
-	logger.Infof("dir:%s %s\n", dir, d)
+func dumpDirIter(ctx context.Context, t *testing.T, bs bpb.ByteStreamClient, instance, dir string, d *rpb.Digest, files map[string]fileState) error {
+	t.Logf("dir:%s %s", dir, d)
 
 	resname := cas.ResName(instance, d)
 	var buf bytes.Buffer
@@ -588,17 +588,18 @@ func dumpDirIter(ctx context.Context, bs bpb.ByteStreamClient, instance, dir str
 	for _, f := range curdir.Files {
 		fname := filepath.Join(dir, f.Name)
 		files[fname] = fileState{
+			digest:       f.Digest,
 			isFile:       true,
 			isExecutable: f.IsExecutable,
 		}
-		logger.Infof("file:%s %s x:%t\n", fname, f.Digest, f.IsExecutable)
+		t.Logf("file:%s %s x:%t", fname, f.Digest, f.IsExecutable)
 	}
 	for _, subdir := range curdir.Directories {
 		dname := filepath.Join(dir, subdir.Name)
 		files[dname] = fileState{
 			isDir: true,
 		}
-		err := dumpDirIter(ctx, bs, instance, dname, subdir.Digest, files)
+		err := dumpDirIter(ctx, t, bs, instance, dname, subdir.Digest, files)
 		if err != nil {
 			return err
 		}
@@ -608,9 +609,9 @@ func dumpDirIter(ctx context.Context, bs bpb.ByteStreamClient, instance, dir str
 
 // dumpDirs dumps file list and directory list.
 // The value of `files` means a file is executable or not.
-func dumpDir(ctx context.Context, bs bpb.ByteStreamClient, instance, dir string, d *rpb.Digest) (map[string]fileState, error) {
+func dumpDir(ctx context.Context, t *testing.T, bs bpb.ByteStreamClient, instance, dir string, d *rpb.Digest) (map[string]fileState, error) {
 	files := make(map[string]fileState)
-	err := dumpDirIter(ctx, bs, instance, dir, d, files)
+	err := dumpDirIter(ctx, t, bs, instance, dir, d, files)
 	if err != nil {
 		return nil, err
 	}
@@ -677,7 +678,7 @@ func TestAdapterHandleOutputsWithSystemIncludePaths(t *testing.T) {
 	if action == nil {
 		t.Fatalf("gotAction is nil")
 	}
-	files, err := dumpDir(ctx, cluster.adapter.Client, cluster.adapter.DefaultInstance(), ".", action.InputRootDigest)
+	files, err := dumpDir(ctx, t, cluster.adapter.Client, cluster.adapter.DefaultInstance(), ".", action.InputRootDigest)
 	if err != nil {
 		t.Fatalf("err %v", err)
 	}
@@ -726,7 +727,7 @@ func TestAdaptorHandleArbitraryToolchainSupport(t *testing.T) {
 			"-c", "../../src/hello.c",
 			"-o", "hello.o",
 		},
-		Env: []string{},
+		Env: []string{"PWD=/b/c/w/out/Release"},
 		Cwd: proto.String("/b/c/w/out/Release"),
 		Input: []*gomapb.ExecReq_Input{
 			clangToolchainInput,
@@ -762,17 +763,40 @@ func TestAdaptorHandleArbitraryToolchainSupport(t *testing.T) {
 		t.Errorf("Exec error=%v; want=%v", resp.GetError(), gomapb.ExecResp_OK)
 	}
 
+	command := cluster.rbe.gotCommand
+	if command == nil {
+		t.Fatal("gotCommand is nil")
+	}
+	wantArgs := []string{
+		"out/Release/run.sh",
+		"../../bin/clang", "-Iinclude",
+		"-c", "../../src/hello.c",
+		"-o", "hello.o",
+	}
+	if !cmp.Equal(command.Arguments, wantArgs) {
+		t.Errorf("arguments=%q; want=%q", command.Arguments, wantArgs)
+	}
+	wantEnvs := []*rpb.Command_EnvironmentVariable{
+		{
+			Name:  "WORK_DIR",
+			Value: "out/Release",
+		},
+	}
+	if !cmp.Equal(command.EnvironmentVariables, wantEnvs, cmp.Comparer(proto.Equal)) {
+		t.Errorf("environment_variables=%s; want=%s", command.EnvironmentVariables, wantEnvs)
+	}
+
 	action := cluster.rbe.gotAction
 	if action == nil {
 		t.Fatalf("gotAction is nil")
 	}
-	files, err := dumpDir(ctx, cluster.adapter.Client, cluster.adapter.DefaultInstance(), ".", action.InputRootDigest)
+	files, err := dumpDir(ctx, t, cluster.adapter.Client, cluster.adapter.DefaultInstance(), ".", action.InputRootDigest)
 	if err != nil {
 		t.Fatalf("err %v", err)
 	}
 
 	// files and executables might contain extra "out/Release/run.sh".
-	wantFiles := []string{"bin/clang", "include/hello.h", "src/hello.c"}
+	wantFiles := []string{"out/Release/run.sh", "bin/clang", "include/hello.h", "src/hello.c"}
 	wantExecutables := []string{"bin/clang"}
 
 	for _, f := range wantFiles {
@@ -784,6 +808,146 @@ func TestAdaptorHandleArbitraryToolchainSupport(t *testing.T) {
 		if !files[e].isExecutable {
 			t.Errorf("%q was not an executable file, but should: files=%v", e, files)
 		}
+	}
+
+	if got, want := files["out/Release/run.sh"].digest, digest.Bytes("cwd-agnostic-wrapper-script", []byte(cwdAgnosticWrapperScript)).Digest(); !proto.Equal(got, want) {
+		t.Errorf("digest of out/Release/run.sh: %s != %s", got, want)
+	}
+}
+
+func TestAdaptorHandleArbitraryToolchainSupportNonCwdAgnostic(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cluster := &fakeCluster{
+		rbe: newFakeRBE(),
+	}
+	err := cluster.setup(ctx, cluster.rbe.instancePrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cluster.teardown()
+
+	// Instead of adding a new compiler, register toolchain platform.
+	err = cluster.pushPlatform(ctx, "docker://grpc.io/goma-dev/container-image@sha256:yyyy", []string{"os:linux"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var localFiles fakeLocalFiles
+	localFiles.Add("/b/c/w/bin/clang", randomBigSize())
+	localFiles.Add("/b/c/w/include/hello.h", randomSize())
+	localFiles.Add("/b/c/w/src/hello.c", randomSize())
+
+	clangToolchainInput := localFiles.mustInput(ctx, t, cluster.adapter.GomaFile, "/b/c/w/bin/clang", "../../bin/clang")
+	clangHashKey := localFiles.mustFileHash(ctx, t, "/b/c/w/bin/clang")
+
+	req := &gomapb.ExecReq{
+		CommandSpec: &gomapb.CommandSpec{
+			Name:              proto.String("clang"),
+			Version:           proto.String("1234"),
+			Target:            proto.String("x86-64-linux-gnu"),
+			BinaryHash:        []byte(clangHashKey),
+			LocalCompilerPath: proto.String("../../bin/clang"),
+		},
+		Arg: []string{
+			"../../bin/clang", "-Iinclude",
+			"-g", "-c", "../../src/hello.c",
+			"-o", "hello.o",
+		},
+		Env: []string{"PWD=/b/c/w/out/Debug"},
+		Cwd: proto.String("/b/c/w/out/Debug"),
+		Input: []*gomapb.ExecReq_Input{
+			clangToolchainInput,
+			localFiles.mustInput(ctx, t, cluster.adapter.GomaFile, "/b/c/w/include/hello.h", "../../include/hello.h"),
+			localFiles.mustInput(ctx, t, cluster.adapter.GomaFile, "/b/c/w/src/hello.c", "../../src/hello.c"),
+		},
+		Subprogram:        []*gomapb.SubprogramSpec{},
+		ToolchainIncluded: proto.Bool(true),
+		ToolchainSpecs: []*gomapb.ToolchainSpec{
+			&gomapb.ToolchainSpec{
+				Path:         proto.String("../../bin/clang"),
+				Hash:         proto.String(clangHashKey),
+				Size:         clangToolchainInput.Content.FileSize,
+				IsExecutable: proto.Bool(true),
+			},
+		},
+		RequesterInfo: &gomapb.RequesterInfo{
+			Dimensions: []string{
+				"os:linux",
+			},
+			PathStyle: gomapb.RequesterInfo_POSIX_STYLE.Enum(),
+		},
+		ExpectedOutputFiles: []string{
+			"hello.o",
+		},
+	}
+
+	resp, err := cluster.adapter.Exec(ctx, req)
+	if err != nil {
+		t.Fatalf("Exec(ctx, req)=%v; %v; want nil error", resp, err)
+	}
+	if resp.GetError() != gomapb.ExecResp_OK {
+		t.Errorf("Exec error=%v; want=%v", resp.GetError(), gomapb.ExecResp_OK)
+	}
+
+	command := cluster.rbe.gotCommand
+	if command == nil {
+		t.Fatal("gotCommand is nil")
+	}
+	wantArgs := []string{
+		"out/Debug/run.sh",
+		"../../bin/clang", "-Iinclude",
+		"-g", "-c", "../../src/hello.c",
+		"-o", "hello.o",
+	}
+	if !cmp.Equal(command.Arguments, wantArgs) {
+		t.Errorf("arguments=%q; want=%q", command.Arguments, wantArgs)
+	}
+	wantEnvs := []*rpb.Command_EnvironmentVariable{
+		{
+			Name:  "INPUT_ROOT_DIR",
+			Value: "/b/c/w",
+		},
+		{
+			Name:  "PWD",
+			Value: "/b/c/w/out/Debug",
+		},
+		{
+			Name:  "WORK_DIR",
+			Value: "out/Debug",
+		},
+	}
+	if !cmp.Equal(command.EnvironmentVariables, wantEnvs, cmp.Comparer(proto.Equal)) {
+		t.Errorf("environment_variables=%s; want=%s", command.EnvironmentVariables, wantEnvs)
+	}
+
+	action := cluster.rbe.gotAction
+	if action == nil {
+		t.Fatalf("gotAction is nil")
+	}
+	files, err := dumpDir(ctx, t, cluster.adapter.Client, cluster.adapter.DefaultInstance(), ".", action.InputRootDigest)
+	if err != nil {
+		t.Fatalf("err %v", err)
+	}
+
+	// files and executables might contain extra "out/Release/run.sh".
+	wantFiles := []string{"out/Debug/run.sh", "bin/clang", "include/hello.h", "src/hello.c"}
+	wantExecutables := []string{"bin/clang"}
+
+	for _, f := range wantFiles {
+		if !files[f].isFile {
+			t.Errorf("%q was not found in files, but should: files=%v", f, files)
+		}
+	}
+	for _, e := range wantExecutables {
+		if !files[e].isExecutable {
+			t.Errorf("%q was not an executable file, but should: files=%v", e, files)
+		}
+	}
+
+	if got, want := files["out/Debug/run.sh"].digest, digest.Bytes("wrapper-script", []byte(wrapperScript)).Digest(); !proto.Equal(got, want) {
+		t.Errorf("digest of out/Debug/run.sh: %s != %s", got, want)
 	}
 }
 

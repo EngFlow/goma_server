@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"io"
 
-	rpb "go.chromium.org/goma/server/proto/remote-apis/build/bazel/remote/execution/v2"
+	rpb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 
 	pb "go.chromium.org/goma/server/proto/command"
 	"go.chromium.org/goma/server/remoteexec/digest"

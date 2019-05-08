@@ -14,7 +14,7 @@ import (
 	"flag"
 	"path/filepath"
 
-	rpb "go.chromium.org/goma/server/proto/remote-apis/build/bazel/remote/execution/v2"
+	rpb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 
 	"go.opencensus.io/plugin/ocgrpc"
 	"go.opencensus.io/stats"

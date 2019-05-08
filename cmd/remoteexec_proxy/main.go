@@ -23,10 +23,12 @@ import (
 	"strings"
 	"time"
 
-	rpb "go.chromium.org/goma/server/proto/remote-apis/build/bazel/remote/execution/v2"
+	rpb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 
+	"cloud.google.com/go/storage"
 	"go.opencensus.io/plugin/ocgrpc"
 	"go.opencensus.io/trace"
+	"google.golang.org/api/option"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
@@ -34,6 +36,7 @@ import (
 	"go.chromium.org/goma/server/auth/account"
 	"go.chromium.org/goma/server/auth/acl"
 	"go.chromium.org/goma/server/cache"
+	"go.chromium.org/goma/server/cache/gcs"
 	"go.chromium.org/goma/server/cache/redis"
 	"go.chromium.org/goma/server/file"
 	"go.chromium.org/goma/server/frontend"
@@ -60,8 +63,10 @@ var (
 	remoteexecAddr         = flag.String("remoteexec-addr", "", "remoteexec API endpoint")
 	remoteInstanceName     = flag.String("remote-instance-name", "", "remote instance name")
 	whitelistedUsers       = flag.String("whitelisted-users", "", "comma separated list of whitelisted user. if empty, current user is allowed.")
-	serviceAccountJSON     = flag.String("service-account-json", "", "service account json")
+	serviceAccountJSON     = flag.String("service-account-json", "", "service account json, used to talk to RBE and cloud storage (if --file-cache-bucket is used)")
 	platformContainerImage = flag.String("platform-container-image", "", "docker uri of platform container image")
+
+	fileCacheBucket = flag.String("file-cache-bucket", "", "file cache bucking store bucket")
 
 	traceProjectID = flag.String("trace-project-id", "", "project id for cloud tracing")
 	traceFraction  = flag.Float64("trace-sampling-fraction", 1.0, "sampling fraction for stackdriver trace")
@@ -255,19 +260,36 @@ func main() {
 		CheckToken: aclCheck.CheckToken,
 	}
 
-	// TODO: support redis for cache?
-	cacheService, err := cache.New(cache.Config{
-		MaxBytes: 1 * 1024 * 1024 * 1024,
-	})
-	if err != nil {
-		logger.Fatal(err)
+	var cclient cachepb.CacheServiceClient
+	if *fileCacheBucket != "" {
+		logger.Infof("use cloud storage bucket: %s", *fileCacheBucket)
+		var opts []option.ClientOption
+		if *serviceAccountJSON != "" {
+			opts = append(opts, option.WithServiceAccountFile(*serviceAccountJSON))
+		}
+		gsclient, err := storage.NewClient(ctx, opts...)
+		if err != nil {
+			logger.Fatalf("storage client failed: %v", err)
+		}
+		defer gsclient.Close()
+		cclient = cache.LocalClient{
+			CacheServiceServer: gcs.New(gsclient.Bucket(*fileCacheBucket)),
+		}
+	} else {
+		cacheService, err := cache.New(cache.Config{
+			MaxBytes: 1 * 1024 * 1024 * 1024,
+		})
+		if err != nil {
+			logger.Fatal(err)
+		}
+		cclient = cacheClient{
+			Service: cacheService,
+		}
 	}
 
 	fileServiceClient := fileClient{
 		Service: &file.Service{
-			Cache: cacheClient{
-				Service: cacheService,
-			},
+			Cache: cclient,
 		},
 	}
 

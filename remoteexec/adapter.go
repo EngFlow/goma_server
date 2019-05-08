@@ -10,12 +10,13 @@ package remoteexec
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"strings"
 	"sync"
 	"time"
 
-	rpb "go.chromium.org/goma/server/proto/remote-apis/build/bazel/remote/execution/v2"
+	rpb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 	"go.chromium.org/goma/server/server"
 
 	"github.com/golang/protobuf/proto"
@@ -259,35 +260,46 @@ func (f *Adapter) Exec(ctx context.Context, req *gomapb.ExecReq) (resp *gomapb.E
 		return resp, nil
 	}
 	r.setupNewAction(ctx)
-	logger.Infof("setup %s", time.Since(t))
+
+	// Use this to collect all timestamps and then print on one line, regardless of where
+	// this function returns.
+	var timestamps []string
+	defer func() {
+		logger.Infof("%s", strings.Join(timestamps, ", "))
+	}()
+	addTimestamp := func(desc string, duration time.Duration) {
+		timestamps = append(timestamps, fmt.Sprintf("%s: %s", desc, duration))
+	}
+
+	addTimestamp("setup", time.Since(t))
 
 	eresp := &rpb.ExecuteResponse{}
 	var cached bool
 	eresp.Result, cached = r.checkCache(ctx)
-	var execStartTime time.Time
 	if !cached {
 		t = time.Now()
 		blobs := r.missingBlobs(ctx)
-		logger.Infof("check missing %s", time.Since(t))
+		addTimestamp("check missing", time.Since(t))
 		t = time.Now()
 		resp := r.uploadBlobs(ctx, blobs)
 		if resp != nil {
-			logger.Infof("fail fast for missing input: %s", time.Since(t))
+			addTimestamp("fail fast for missing input", time.Since(t))
 			return resp, nil
 		}
-		logger.Infof("upload blobs %s", time.Since(t))
+		addTimestamp("upload blobs", time.Since(t))
 
-		execStartTime = time.Now()
+		t = time.Now()
 		var err error
 		eresp, err = r.executeAction(ctx)
-		logger.Infof("execute %s: %v", time.Since(execStartTime), err)
+		addTimestamp("execute", time.Since(t))
 		if err != nil {
+			logger.Infof("execute err=%v", err)
 			return nil, err
 		}
 	}
 	t = time.Now()
 	resp, err = r.newResp(ctx, eresp, cached)
-	logger.Infof("response %s", time.Since(t))
-	logger.Infof("total %s", time.Since(t0))
+	addTimestamp("response", time.Since(t))
+	addTimestamp("total", time.Since(t0))
 	return resp, err
 }

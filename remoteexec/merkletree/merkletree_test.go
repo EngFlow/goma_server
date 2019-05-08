@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	rpb "go.chromium.org/goma/server/proto/remote-apis/build/bazel/remote/execution/v2"
+	rpb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 
 	"github.com/golang/protobuf/proto"
 
