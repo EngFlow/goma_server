@@ -40,6 +40,9 @@ luci.project(
     ],
 )
 
+# Without this, luci-logdog.cfg won't be made.
+luci.logdog()
+
 luci.cq(status_host = "chromium-cq-status.appspot.com")
 
 luci.bucket(
