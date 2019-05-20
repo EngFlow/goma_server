@@ -40,6 +40,8 @@ luci.project(
     ],
 )
 
+luci.milo(logo = "https://storage.googleapis.com/chrome-infra-public/logo/goma-server-logo.png")
+
 # Without this, luci-logdog.cfg won't be made.
 luci.logdog()
 
