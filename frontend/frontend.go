@@ -53,7 +53,7 @@ var (
 	// DefaultViews are the default views provided by this package.
 	// You need to register he view for data to actually be collected.
 	DefaultViews = []*view.View{
-		&view.View{
+		{
 			Name:        "go.chromium.org/goma/server/frontend.ping_count_by_useragent",
 			Description: "ping request count by user-agent",
 			TagKeys: []tag.Key{

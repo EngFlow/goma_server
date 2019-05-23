@@ -334,9 +334,22 @@ func Handler(name string, req, resp proto.Message, h func(context.Context, proto
 			logger.Errorf("incoming parse error %s: %d %s: %v", r.URL.Path, code, http.StatusText(code), err)
 			return
 		}
+
+		// use short timeout at first, then longer timeout when
+		// deadline exceeded, to mitigate grpc lost response case.
+		// http://b/129647209
+		// assume most call needs less than 1 minute (both exec,
+		// file access),
+		// according to API metrics, 99%ile of Execute API latency
+		// was 33.225 seconds (as of May 15, 2019).
+		// only a few exec call may need longer timeout.
+		// see below if status.Code(err) == codes.DeadlineExceeded case.
+		timeouts := []time.Duration{40 * time.Second, 1 * time.Minute, 3 * time.Minute, 5 * time.Minute}
 		var resp proto.Message
 		err = opt.retry.Do(ctx, func() error {
-			ctx := ctx
+			pctx := ctx
+			ctx, cancel := context.WithTimeout(ctx, timeouts[0])
+			defer cancel()
 			// TODO: hard fail if opt.Auth == nil?
 			if opt.Auth != nil {
 				ctx, err = opt.Auth.Auth(ctx, r)
@@ -350,6 +363,22 @@ func Handler(name string, req, resp proto.Message, h func(context.Context, proto
 			resp, err = h(ctx, req)
 			if opt.Auth != nil && status.Code(err) == codes.Unauthenticated {
 				logger.Warnf("retry for unauthenticated %v", err)
+				return rpc.RetriableError{
+					Err: err,
+				}
+			}
+			if status.Code(err) == codes.DeadlineExceeded && pctx.Err() == nil {
+				// api call is timed out, but caller's context is not.
+				// it would happen
+				// a) timeout was short; api call actually needs more time.
+				// b) api has been finished, but grpc lost response. http://b/129647209
+				// Retry with longer timeout.
+				// if a, expect to succeed for long run with longer timeout.
+				// if b, expect response soon (cache hit).
+				if len(timeouts) > 1 {
+					timeouts = timeouts[1:]
+				}
+				logger.Warnf("retry with longer timeout %s", timeouts[0])
 				return rpc.RetriableError{
 					Err: err,
 				}

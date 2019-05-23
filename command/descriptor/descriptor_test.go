@@ -251,6 +251,18 @@ func TestClangClVersion(t *testing.T) {
 			out:  "clang version 3.5.0 (trunk 225621)\r\nTarget: i686-pc-windows-msvc",
 			want: "clang version 3.5.0 (trunk 225621)",
 		},
+		{
+			out: `clang version 9.0.0 (https://github.com/llvm/llvm-project/ 67510fac36d27b2e22c7cd955fc167136b737b93)
+Target: x86_64-pc-windows-msvc
+Thread model: posix
+InstalledDir: /var/tmp/clang/third_party/llvm-build/Release+Asserts/bin
+`,
+			want: "clang version 9.0.0 (https://github.com/llvm/llvm-project/ 67510fac36d27b2e22c7cd955fc167136b737b93)",
+		},
+		{
+			out:  "clang version 9.0.0 (https://github.com/llvm/llvm-project/ 67510fac36d27b2e22c7cd955fc167136b737b93)\r\nTarget: x86_64-pc-windows-msvc\r\nThread model: posix\r\nInstalledDir: /var/tmp/clang/third_party/llvm-build/Release+Asserts/bin\r\n",
+			want: "clang version 9.0.0 (https://github.com/llvm/llvm-project/ 67510fac36d27b2e22c7cd955fc167136b737b93)",
+		},
 	} {
 		got, err := ClangClVersion([]byte(tc.out))
 		if err != nil {
@@ -288,6 +300,18 @@ func TestClangClTarget(t *testing.T) {
 		{
 			out:  "clang version 3.5.0 (trunk 225621)\r\nTarget: i686-pc-windows-msvc\r\n",
 			want: "i686-pc-windows-msvc",
+		},
+		{
+			out: `clang version 9.0.0 (https://github.com/llvm/llvm-project/ 67510fac36d27b2e22c7cd955fc167136b737b93)
+Target: x86_64-pc-windows-msvc
+Thread model: posix
+InstalledDir: /var/tmp/clang/third_party/llvm-build/Release+Asserts/bin
+`,
+			want: "x86_64-pc-windows-msvc",
+		},
+		{
+			out:  "clang version 9.0.0 (https://github.com/llvm/llvm-project/ 67510fac36d27b2e22c7cd955fc167136b737b93)\r\nTarget: x86_64-pc-windows-msvc\r\nThread model: posix\r\nInstalledDir: /var/tmp/clang/third_party/llvm-build/Release+Asserts/bin\r\n",
+			want: "x86_64-pc-windows-msvc",
 		},
 	} {
 		got, err := ClangClTarget([]byte(tc.out))

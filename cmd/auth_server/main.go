@@ -61,7 +61,7 @@ var (
 	configStatusKey = mustTagNewKey("status")
 
 	configViews = []*view.View{
-		&view.View{
+		{
 			Description: "counts acl updates",
 			TagKeys: []tag.Key{
 				configStatusKey,

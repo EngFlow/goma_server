@@ -16,7 +16,6 @@ import (
 	"time"
 
 	rpb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
-
 	"github.com/golang/protobuf/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -231,7 +230,7 @@ func newFakeClang(f *fakeCmdStorage, version, target string) *fakeToolchain {
 	libFindBadConstructs := f.newFileSpec("lib/libFindBadConstructs.so", false)
 	return &fakeToolchain{
 		descs: []*cpb.CmdDescriptor{
-			&cpb.CmdDescriptor{
+			{
 				Selector: &cpb.Selector{
 					Name:       "clang",
 					Version:    version,
@@ -243,7 +242,7 @@ func newFakeClang(f *fakeCmdStorage, version, target string) *fakeToolchain {
 					PathType: cpb.CmdDescriptor_POSIX,
 				},
 			},
-			&cpb.CmdDescriptor{
+			{
 				Selector: &cpb.Selector{
 					Name:       "clang++",
 					Version:    version,
@@ -255,7 +254,7 @@ func newFakeClang(f *fakeCmdStorage, version, target string) *fakeToolchain {
 					PathType: cpb.CmdDescriptor_POSIX,
 				},
 			},
-			&cpb.CmdDescriptor{
+			{
 				Selector: &cpb.Selector{
 					Name:       "libFindBadConstructs.so",
 					BinaryHash: libFindBadConstructs.Hash,
@@ -268,7 +267,7 @@ func newFakeClang(f *fakeCmdStorage, version, target string) *fakeToolchain {
 		},
 		RemoteexecPlatform: &cpb.RemoteexecPlatform{
 			Properties: []*cpb.RemoteexecPlatform_Property{
-				&cpb.RemoteexecPlatform_Property{
+				{
 					Name:  "container-image",
 					Value: "docker://grpc.io/goma-dev/container-image@sha256:xxxx",
 				},
@@ -303,10 +302,10 @@ func (f *fakeCluster) pushPlatform(ctx context.Context, containerImage string, d
 	}
 
 	config.Configs = []*cpb.Config{
-		&cpb.Config{
+		{
 			RemoteexecPlatform: &cpb.RemoteexecPlatform{
 				Properties: []*cpb.RemoteexecPlatform_Property{
-					&cpb.RemoteexecPlatform_Property{
+					{
 						Name:  "container-image",
 						Value: containerImage,
 					},
@@ -344,6 +343,11 @@ func (f *fakeLocalFiles) Add(fname string, size uint64) {
 	buf := make([]byte, size)
 	rand.Read(buf)
 	f.m[fname] = string(buf)
+}
+
+// Dup dups oldname as newname.
+func (f *fakeLocalFiles) Dup(oldname, newname string) {
+	f.m[newname] = f.m[oldname]
 }
 
 // Open opens fake file.

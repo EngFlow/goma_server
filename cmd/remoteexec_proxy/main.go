@@ -65,6 +65,7 @@ var (
 	whitelistedUsers       = flag.String("whitelisted-users", "", "comma separated list of whitelisted user. if empty, current user is allowed.")
 	serviceAccountJSON     = flag.String("service-account-json", "", "service account json, used to talk to RBE and cloud storage (if --file-cache-bucket is used)")
 	platformContainerImage = flag.String("platform-container-image", "", "docker uri of platform container image")
+	insecureRemoteexec     = flag.Bool("insecure-remoteexec", false, "insecure grpc for remoteexec API")
 
 	fileCacheBucket = flag.String("file-cache-bucket", "", "file cache bucking store bucket")
 
@@ -142,7 +143,7 @@ func (a defaultACL) Load(ctx context.Context) (*authpb.ACL, error) {
 
 	return &authpb.ACL{
 		Groups: []*authpb.Group{
-			&authpb.Group{
+			{
 				Id:             "user",
 				Audience:       gomaClientClientID,
 				Emails:         a.whitelistedUser,
@@ -293,10 +294,16 @@ func main() {
 		},
 	}
 
-	reConn, err := grpc.DialContext(ctx, *remoteexecAddr,
+	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{})),
 		grpc.WithStatsHandler(&ocgrpc.ClientHandler{}),
-	)
+	}
+	if *insecureRemoteexec {
+		opts[0] = grpc.WithInsecure()
+		logger.Warnf("use insecrure remoteexec API")
+	}
+
+	reConn, err := grpc.DialContext(ctx, *remoteexecAddr, opts...)
 	if err != nil {
 		logger.Fatal(err)
 	}

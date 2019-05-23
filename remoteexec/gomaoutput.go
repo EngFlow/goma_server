@@ -168,7 +168,7 @@ func (g gomaOutput) toFileBlob(ctx context.Context, output *rpb.OutputFile) (*go
 		err = rpc.Retry{}.Do(ctx, func() error {
 			resp, err = g.gomaFile.StoreFile(ctx, &gomapb.StoreFileReq{
 				Blob: []*gomapb.FileBlob{
-					&gomapb.FileBlob{
+					{
 						BlobType: gomapb.FileBlob_FILE_CHUNK.Enum(),
 						Offset:   proto.Int64(offset),
 						Content:  buf[:n],

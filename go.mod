@@ -3,7 +3,7 @@ module go.chromium.org/goma/server
 go 1.12
 
 require (
-	cloud.google.com/go v0.38.0
+	cloud.google.com/go v0.39.0
 	contrib.go.opencensus.io/exporter/stackdriver v0.11.0
 	github.com/bazelbuild/remote-apis v0.0.0-20190507145712-5556e9c6153f
 	github.com/fsnotify/fsnotify v1.4.7
@@ -18,13 +18,13 @@ require (
 	go.opencensus.io v0.21.0
 	go.uber.org/atomic v1.3.2 // indirect
 	go.uber.org/multierr v1.1.0 // indirect
-	go.uber.org/zap v1.9.1
+	go.uber.org/zap v1.10.0
 	golang.org/x/build v0.0.0-20190314215453-3ce8d48fad73
 	golang.org/x/net v0.0.0-20190320064053-1272bf9dcd53
 	golang.org/x/oauth2 v0.0.0-20190319182350-c85d3e98c914
 	golang.org/x/sync v0.0.0-20190227155943-e225da77a7e6
-	google.golang.org/api v0.4.0
-	google.golang.org/genproto v0.0.0-20190502173448-54afdca5d873
+	google.golang.org/api v0.5.0
+	google.golang.org/genproto v0.0.0-20190508193815-b515fa19cec8
 	google.golang.org/grpc v1.20.1
 	gopkg.in/yaml.v2 v2.2.2 // indirect
 )

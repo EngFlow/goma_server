@@ -311,7 +311,7 @@ func bytestreamDownloadCheck(ctx context.Context, client bpb.ByteStreamClient, r
 		return err
 	}
 
-	if !cmp.Equal(dbuf.Bytes(), buf.Bytes()) {
+	if !bytes.Equal(dbuf.Bytes(), buf.Bytes()) {
 		return fmt.Errorf("digest content mismatch for %s", resname)
 	}
 	return nil

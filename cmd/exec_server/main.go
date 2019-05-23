@@ -74,7 +74,7 @@ var (
 	configStatusKey = mustTagNewKey("status")
 
 	configViews = []*view.View{
-		&view.View{
+		{
 			Description: "counts toolchain-config updates",
 			TagKeys: []tag.Key{
 				configStatusKey,
@@ -119,11 +119,9 @@ func configMapToConfigResp(ctx context.Context, cm *cmdpb.ConfigMap) *cmdpb.Conf
 			Target: &cmdpb.Target{
 				Addr: *remoteexecAddr,
 			},
-			BuildInfo: &cmdpb.BuildInfo{},
-			RemoteexecPlatform: &cmdpb.RemoteexecPlatform{
-				RbeInstanceBasename: rt.RbeInstanceBasename,
-			},
-			Dimensions: rt.PlatformRuntimeConfig.Dimensions,
+			BuildInfo:          &cmdpb.BuildInfo{},
+			RemoteexecPlatform: &cmdpb.RemoteexecPlatform{},
+			Dimensions:         rt.PlatformRuntimeConfig.Dimensions,
 		}
 		for _, p := range rt.Platform.Properties {
 			c.RemoteexecPlatform.Properties = append(c.RemoteexecPlatform.Properties, &cmdpb.RemoteexecPlatform_Property{

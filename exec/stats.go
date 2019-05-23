@@ -26,7 +26,7 @@ var (
 	// DefaultViews are the default views provided by this package.
 	// You need to register the view for data to actually be collected.
 	DefaultViews = []*view.View{
-		&view.View{
+		{
 			Description: "exec request api-error",
 			TagKeys: []tag.Key{
 				apiErrorKey,
@@ -34,7 +34,7 @@ var (
 			Measure:     apiErrors,
 			Aggregation: view.Count(),
 		},
-		&view.View{
+		{
 			Description: `counts toolchain selection. result is "used", "found", "requested" or "missed"`,
 			TagKeys: []tag.Key{
 				selectorKey,

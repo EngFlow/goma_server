@@ -41,7 +41,7 @@ var (
 	// DefaultToolchainViews are the default views provided by this package.
 	// You need to register the view for data to actually be collected.
 	DefaultToolchainViews = []*view.View{
-		&view.View{
+		{
 			Description: `counts toolchain selection. result is "used", "found", "requested" or "missed"`,
 			TagKeys: []tag.Key{
 				selectorKey,
@@ -449,7 +449,7 @@ func getCmdFiles(ctx context.Context, req *gomapb.ExecReq) []*cmdpb.FileSpec {
 		// can be removed.
 		logger.Debugf("toolchain input: command spec: %v", req.CommandSpec)
 		return []*cmdpb.FileSpec{
-			&cmdpb.FileSpec{
+			{
 				Path:         req.CommandSpec.GetLocalCompilerPath(),
 				IsExecutable: true,
 				Size:         req.CommandSpec.GetSize(),

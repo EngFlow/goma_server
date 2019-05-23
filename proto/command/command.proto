@@ -213,8 +213,8 @@ message RuntimeConfig {
   // the dimentions, this runtime config will be selected.
   PlatformRuntimeConfig platform_runtime_config = 6;
 
-  // Basename of RBE instance to use. e.g. "default_instance" or "windows".
-  string rbe_instance_basename = 7;
+  reserved 7;
+  reserved "rbe_instance_basename";
 
   // Platform is a set of requirements, such as haredware, operting system
   // for RBE backend.

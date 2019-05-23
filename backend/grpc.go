@@ -86,7 +86,7 @@ func (g GRPC) Ping() http.Handler {
 
 // Exec returns http handler for exec request.
 func (g GRPC) Exec() http.Handler {
-	return execrpc.Handler(g.ExecServer, g.httprpcOpts(5*time.Minute)...)
+	return execrpc.Handler(g.ExecServer, g.httprpcOpts(9*time.Minute+50*time.Second)...)
 }
 
 // ByteStream returns http handler for bytestream.

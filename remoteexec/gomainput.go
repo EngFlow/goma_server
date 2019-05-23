@@ -52,7 +52,6 @@ func (gi gomaInput) toDigest(ctx context.Context, input *gomapb.ExecReq_Input) (
 	src := gomaInputSource{
 		lookupClient: gi.gomaFile,
 		hashKey:      hashKey,
-		filename:     input.GetFilename(),
 		blob:         input.GetContent(),
 	}
 	return gi.digestCache.Get(ctx, hashKey, src)
@@ -103,12 +102,11 @@ func lookup(ctx context.Context, c lookupClient, hashKey string) (*gomapb.FileBl
 type gomaInputSource struct {
 	lookupClient lookupClient
 	hashKey      string
-	filename     string
 	blob         *gomapb.FileBlob
 }
 
 func (g gomaInputSource) String() string {
-	return fmt.Sprintf("goma-input:%s %p %s", g.hashKey, g.blob, g.filename)
+	return fmt.Sprintf("goma-input:%s %p", g.hashKey, g.blob)
 }
 
 func (g gomaInputSource) Open(ctx context.Context) (io.ReadCloser, error) {

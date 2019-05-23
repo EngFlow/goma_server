@@ -96,9 +96,9 @@ func validCommonDir(filepath clientFilePath, dir string) bool {
 	return true
 }
 
-// needOverlay returns true if overlayfs is needed to run the task with
+// needChroot returns true if chroot is needed to run the task with
 // given common `dir`
-func needOverlay(filepath clientFilePath, dir string) bool {
+func needChroot(filepath clientFilePath, dir string) bool {
 	return !validCommonDir(filepath, dir)
 }
 
@@ -150,18 +150,14 @@ func checkInputRootDir(filepath clientFilePath, dir string) error {
 }
 
 // inputRootDir returns common root of paths.
-// If second return value is true, overlayfs must be used.  It become true only
-// if `allowOverlay` is true and common input root is "/".
-func inputRootDir(filepath clientFilePath, paths []string, allowOverlay bool) (string, bool, error) {
+// If second return value is true, chroot must be used.  It become true only
+// if `allowChroot` is true and common input root is "/".
+func inputRootDir(filepath clientFilePath, paths []string, allowChroot bool) (string, bool, error) {
 	root := commonDir(filepath, paths)
-	if needOverlay(filepath, root) && allowOverlay {
+	if needChroot(filepath, root) && allowChroot {
 		switch filepath.(type) {
 		// TODO: support non-posix platform
 		case posixpath.FilePath:
-			err := verifyPathsForOverlay(paths)
-			if err != nil {
-				return "", false, err
-			}
 			return "/", true, nil
 		}
 	}
@@ -222,29 +218,4 @@ func hasPrefixDir(p, prefix string) bool {
 		return true
 	}
 	return p[len(prefix)] == '/'
-}
-
-// verifyPathsForOverlay verifies paths won't overwrite files including libs
-// used by docker or internal work directory.
-// It returns nil for success, and error for failure.
-// TODO: support non-posix platforms.
-func verifyPathsForOverlay(paths []string) error {
-	blacklist := []string{
-		// for docker
-		"/bin",
-		"/sbin",
-		"/lib",
-		"/lib64",
-		"/dev",
-		// for internal work directory.
-		"/workdir",
-	}
-	for _, p := range paths {
-		for _, b := range blacklist {
-			if hasPrefixDir(p, b) {
-				return fmt.Errorf("%s contains blacklisted dir: %s", p, b)
-			}
-		}
-	}
-	return nil
 }

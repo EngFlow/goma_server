@@ -133,7 +133,7 @@ func (m Mixer) selectBackend(ctx context.Context, group string, q url.Values) (B
 	}
 	backend = m.defaultBackend
 	if backend != nil {
-		logger.Infof("backend default")
+		logger.Infof("backend default for %s", key)
 		return backend, true
 	}
 	return nil, false

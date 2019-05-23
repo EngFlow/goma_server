@@ -29,7 +29,7 @@ var (
 	clexeVersionRegexp = regexp.MustCompile(`Compiler Version ([0-9\.]+) for`)
 	clexeTargetRegexp  = regexp.MustCompile(`Compiler Version [0-9\.]+ for (x\d+)`)
 
-	clangclExpectedVersionRegexp = regexp.MustCompile(`clang\s+version\s+\d+\.\d+\.\d+\s+\(trunk\s+\d+\)`)
+	clangclExpectedVersionRegexp = regexp.MustCompile(`clang\s+version\s+\d+\.\d+\.\d+\s+\([^)]*\)`)
 	clangclExpectedTargetRegexp  = regexp.MustCompile(`Target:\s+\.*`)
 )
 
@@ -663,6 +663,11 @@ func ClexeTarget(out []byte) (string, error) {
 //
 //   clang version 6.0.0 (trunk 308728)
 //   Target: x86_64-pc-windows-msvc
+//
+//   clang version 9.0.0 (https://github.com/llvm/llvm-project/ 67510fac36d27b2e22c7cd955fc167136b737b93)
+//   Target: x86_64-pc-windows-msvc
+//   Thread model: posix
+//   InstalledDir: /var/tmp/clang/third_party/llvm-build/Release+Asserts/bin
 //
 // Note that endline might be CRLF.
 func ClangClVersion(out []byte) (string, error) {

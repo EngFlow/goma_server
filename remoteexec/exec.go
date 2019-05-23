@@ -58,7 +58,8 @@ type request struct {
 	action       *rpb.Action
 	actionDigest *rpb.Digest
 
-	needOverlay bool
+	allowChroot bool
+	needChroot  bool
 
 	err error
 }
@@ -195,6 +196,7 @@ func (r *request) getInventoryData(ctx context.Context) *gomapb.ExecResp {
 	for _, prop := range cmdConfig.GetRemoteexecPlatform().GetProperties() {
 		r.addPlatformProperty(ctx, prop.Name, prop.Value)
 	}
+	// TODO: set allow chroot if RemoteexecPlatform allows.
 	logger.Infof("platform: %s", r.platform)
 	return nil
 }
@@ -213,6 +215,15 @@ func (r *request) addPlatformProperty(ctx context.Context, name, value string) {
 		Name:  name,
 		Value: value,
 	})
+}
+
+type inputDigestData struct {
+	filename string
+	digest.Data
+}
+
+func (id inputDigestData) String() string {
+	return fmt.Sprintf("%s %s", id.Data.String(), id.filename)
 }
 
 // newInputTree constructs input tree from req.
@@ -234,7 +245,7 @@ func (r *request) newInputTree(ctx context.Context) *gomapb.ExecResp {
 		r.gomaResp.ErrorMessage = append(r.gomaResp.ErrorMessage, fmt.Sprintf("bad input: %v", err))
 		return r.gomaResp
 	}
-	rootDir, needOverlay, err := inputRootDir(r.filepath, inputPaths, false)
+	rootDir, needChroot, err := inputRootDir(r.filepath, inputPaths, r.allowChroot)
 	if err != nil {
 		logger.Errorf("input root detection failed: %v", err)
 		logFileList(logger, "input paths", inputPaths)
@@ -243,7 +254,7 @@ func (r *request) newInputTree(ctx context.Context) *gomapb.ExecResp {
 		return r.gomaResp
 	}
 	r.tree = merkletree.New(r.filepath, rootDir, r.digestStore)
-	r.needOverlay = needOverlay
+	r.needChroot = needChroot
 
 	logger.Infof("new input tree cwd:%s root:%s %s", r.gomaReq.GetCwd(), r.tree.RootDir(), r.cmdConfig.GetCmdDescriptor().GetSetup().GetPathType())
 	gi := gomaInput{
@@ -339,10 +350,14 @@ func (r *request) newInputTree(ctx context.Context) *gomapb.ExecResp {
 				})
 				return
 			}
+			logger.Debugf("input %s hash=%s digest=%s", input.GetFilename(), input.GetHashKey(), data.Digest())
 
 			file := merkletree.Entry{
-				Name:         fname,
-				Data:         data,
+				Name: fname,
+				Data: inputDigestData{
+					filename: input.GetFilename(),
+					Data:     data,
+				},
 				IsExecutable: executableInputs[input.GetFilename()],
 			}
 			if input.Content == nil {
@@ -511,13 +526,22 @@ func (r *request) newInputTree(ctx context.Context) *gomapb.ExecResp {
 
 const (
 	wrapperScript = `#!/bin/bash
-# run command at the same dir as user.
-# it runs in sibling docker
+# run command (i.e. "$@") at the same dir as user.
+#  INPUT_ROOT_DIR: expected directory of input root.
+#    input root is current directory to run this script.
+#    need to mount input root on $INPUT_ROOT_DIR.
+#  WORK_DIR: working directory relative to INPUT_ROOT_DIR.
+#    command will run at $INPUT_ROOT_DIR/$WORK_DIR.
+#
+# by default, it runs in sibling docker (for Cloud RBE).
 #  with the same uid
 #  with current directory (input root) mounted as same path as user's input root
 #  with the same working directory as user
 #  with the same container image
 #  to run the command line as user requested.
+#
+# if /opt/goma/bin/run-at-dir.sh exists in contianer image, use it instead.
+# http://b/132742952
 set -e
 
 # check inputs.
@@ -528,6 +552,12 @@ if [[ "$INPUT_ROOT_DIR" == "" ]]; then
 fi
 if [[ "$WORK_DIR" == "" ]]; then
   echo "ERROR: WORK_DIR is not set" >&2
+  exit 1
+fi
+# if container image provides the script, use it instead.
+if [[ -x /opt/goma/bin/run-at-dir.sh ]]; then
+  exec /opt/goma/bin/run-at-dir.sh "$@"
+  echo "ERROR: exec /opt/goma/bin/run-at-dir.sh failed: $?" >&2
   exit 1
 fi
 
@@ -571,6 +601,60 @@ if [[ "$WORK_DIR" != "" ]]; then
 fi
 exec "$@"
 `
+
+	chrootRunWrapperScript = `#!/bin/bash
+set -e
+
+if [[ "$WORK_DIR" == "" ]]; then
+  echo "ERROR: WORK_DIR is not set" >&2
+  exit 1
+fi
+
+rundir="$(pwd)"
+chroot_workdir="/tmp/goma_chroot"
+
+#
+# mount directories under $chroot_workdir and execute.
+#
+run_dirs=($(ls -1 "$rundir"))
+sys_dirs=(dev proc)
+
+# RBE server generates __action_home__XXXXXXXXXX directory in $rundir
+# (note: XXXXXXXXXX is a random).  Let's skip it because we do not use that.
+# mount directories in the request.
+for d in "${run_dirs[@]}"; do
+  if [[ "$d" == __action_home__* ]]; then
+    continue
+  fi
+  mkdir -p "$chroot_workdir/$d"
+  mount --bind "$rundir/$d" "$chroot_workdir/$d"
+done
+
+# mount directories not included in the request.
+for d in "${sys_dirs[@]}"; do
+  # avoid to mount system directories if that exist in the user's request.
+  if [[ -d "$rundir/$d" ]]; then
+    continue
+  fi
+  # workaround to make them read only mount with util-linux < 2.27.
+  mkdir -p "$chroot_workdir/$d"
+  mount --bind "/$d" "$chroot_workdir/$d"
+  mount "$chroot_workdir/$d" -o remount,ro,bind
+done
+
+# currently running with root. run the command with nobody:nogroup with chroot.
+# We use nsjail to chdir without running bash script inside chroot, and
+# libc inside chroot can be different from libc outside.
+# TODO: give nsjail rule with file.
+nsjail \
+  --user nobody:nobody \
+  --group nogroup:nogroup \
+  --chroot "$chroot_workdir" \
+  --cwd "$WORK_DIR" \
+  --rw \
+  --quiet \
+  -- "$@"
+`
 )
 
 // TODO: put wrapper script in platform container?
@@ -603,24 +687,35 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 	switch pathType {
 	case cmdpb.CmdDescriptor_POSIX:
 		var d digest.Data
-		err = cwdAgnosticReq(ctx, cmdConfig, r.filepath, r.gomaReq.Arg, r.gomaReq.Env)
-		if err != nil {
-			logger.Infof("non cwd agnostic: %v", err)
-			d = digest.Bytes("wrapper-script", []byte(wrapperScript))
-			envs = append(envs, fmt.Sprintf("INPUT_ROOT_DIR=%s", r.tree.RootDir()))
+		// TODO: use chroot for all ATS cases.
+		if r.needChroot {
+			logger.Infof("run with chroot")
 			envs = append(envs, r.gomaReq.Env...)
-			r.addPlatformProperty(ctx, "dockerSiblingContainers", "true")
+			// needed for bind mount.
+			r.addPlatformProperty(ctx, "dockerPrivileged", "true")
+			// needed for chroot command and mount command.
+			r.addPlatformProperty(ctx, "dockerRunAsRoot", "true")
+			d = digest.Bytes("chroot-run-wrapper-script", []byte(chrootRunWrapperScript))
 		} else {
-			logger.Infof("cwd agnostic")
-			d = digest.Bytes("cwd-agnostic-wrapper-script", []byte(cwdAgnosticWrapperScript))
-			for _, e := range r.gomaReq.Env {
-				if strings.HasPrefix(e, "PWD=") {
-					// PWD is usually absolute path.
-					// if cwd agnostic, then we should remove
-					// PWD environment variable.
-					continue
+			err = cwdAgnosticReq(ctx, cmdConfig, r.filepath, r.gomaReq.Arg, r.gomaReq.Env)
+			if err != nil {
+				logger.Infof("non cwd agnostic: %v", err)
+				d = digest.Bytes("wrapper-script", []byte(wrapperScript))
+				envs = append(envs, fmt.Sprintf("INPUT_ROOT_DIR=%s", r.tree.RootDir()))
+				envs = append(envs, r.gomaReq.Env...)
+				r.addPlatformProperty(ctx, "dockerSiblingContainers", "true")
+			} else {
+				logger.Infof("cwd agnostic")
+				d = digest.Bytes("cwd-agnostic-wrapper-script", []byte(cwdAgnosticWrapperScript))
+				for _, e := range r.gomaReq.Env {
+					if strings.HasPrefix(e, "PWD=") {
+						// PWD is usually absolute path.
+						// if cwd agnostic, then we should remove
+						// PWD environment variable.
+						continue
+					}
+					envs = append(envs, e)
 				}
-				envs = append(envs, e)
 			}
 		}
 		wrappers = []wrapperDesc{
@@ -883,11 +978,11 @@ func inputForDigest(ds *digest.Store, d *rpb.Digest) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("not found for %s", d)
 	}
-	gis, ok := src.(gomaInputSource)
+	idd, ok := src.(inputDigestData)
 	if !ok {
 		return "", fmt.Errorf("not input file for %s", d)
 	}
-	return gis.filename, nil
+	return idd.filename, nil
 }
 
 type byInputFilenames struct {

@@ -22,17 +22,17 @@ type DefaultWhitelist struct{}
 func (DefaultWhitelist) Load(ctx context.Context) (*pb.ACL, error) {
 	return &pb.ACL{
 		Groups: []*pb.Group{
-			&pb.Group{
+			{
 				Id:          "chrome-bot",
 				Description: "chromium buildbot service account",
 				Emails:      []string{"goma-client@chrome-infra-auth.iam.gserviceaccount.com"},
 			},
-			&pb.Group{
+			{
 				Id:          "chromium-swarm-dev",
 				Description: "staging chromium-swarm-dev bots. http://b/63818232 http://crbug.com/684735",
 				Emails:      []string{"pool-chrome@chromium-swarm-dev.iam.gserviceaccount.com"},
 			},
-			&pb.Group{
+			{
 				Id:       "googler",
 				Audience: GomaClientClientID,
 				Domains:  []string{"google.com"},

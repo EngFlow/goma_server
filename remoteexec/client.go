@@ -32,7 +32,7 @@ var (
 		stats.UnitDimensionless)
 
 	DefaultViews = []*view.View{
-		&view.View{
+		{
 			Description: `Number of current running exec operations`,
 			Measure:     numRunningOperations,
 			Aggregation: view.Sum(),

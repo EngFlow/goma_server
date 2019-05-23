@@ -20,6 +20,7 @@ import (
 	bpb "google.golang.org/genproto/googleapis/bytestream"
 
 	gomapb "go.chromium.org/goma/server/proto/api"
+	cachepb "go.chromium.org/goma/server/proto/cache"
 	cmdpb "go.chromium.org/goma/server/proto/command"
 	fpb "go.chromium.org/goma/server/proto/file"
 	"go.chromium.org/goma/server/remoteexec/cas"
@@ -178,6 +179,144 @@ func TestAdapterHandleMissingInput(t *testing.T) {
 	}
 	if len(resp.MissingInput) > 0 {
 		t.Fatalf("missing=%v; want no missing", resp.MissingInput)
+	}
+}
+
+func TestAdapterHandleMissingInputFilename(t *testing.T) {
+	// http://b/132391933 should not get filename from digest_cache.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cluster := &fakeCluster{
+		rbe: newFakeRBE(),
+	}
+	err := cluster.setup(ctx, cluster.rbe.instancePrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cluster.teardown()
+
+	clang := newFakeClang(&cluster.cmdStorage, "1234", "x86-64-linux-gnu")
+
+	err = cluster.pushToolchains(ctx, clang)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var localFiles fakeLocalFiles
+	localFiles.Add("/b/c/w/src/hello.cc", randomSize())
+	localFiles.Add("/b/c/w/include/hello.h", randomSize())
+
+	req := &gomapb.ExecReq{
+		CommandSpec: clang.CommandSpec("clang", "bin/clang"),
+		Arg: []string{
+			"bin/clang", "-I../../include",
+			"-c", "../../src/hello.cc",
+		},
+		Env: []string{},
+		Cwd: proto.String("/b/c/w/out/Release"),
+		Input: []*gomapb.ExecReq_Input{
+			localFiles.mustInput(ctx, t, cluster.adapter.GomaFile, "/b/c/w/src/hello.cc", "../../src/hello.cc"),
+			localFiles.mustInput(ctx, t, cluster.adapter.GomaFile, "/b/c/w/include/hello.h", "../../include/hello.h"),
+		},
+		Subprogram:    []*gomapb.SubprogramSpec{},
+		RequesterInfo: &gomapb.RequesterInfo{},
+		HermeticMode:  proto.Bool(true),
+	}
+
+	t.Logf("first call")
+	resp, err := cluster.adapter.Exec(ctx, req)
+	if err != nil {
+		t.Fatalf("Exec(ctx, req)=%v; %v; want nil error", resp, err)
+	}
+	if resp.GetError() != gomapb.ExecResp_OK {
+		t.Errorf("Exec error=%v; want=%v", resp.GetError(), gomapb.ExecResp_OK)
+	}
+	if len(resp.MissingInput) > 0 {
+		t.Fatalf("missing=%v; want no missing", resp.MissingInput)
+	}
+
+	t.Logf("clear in-memory digest cache, but still in redis.")
+	cluster.adapter.DigestCache = digest.NewCache(&cluster.redis)
+
+	req = &gomapb.ExecReq{
+		CommandSpec: clang.CommandSpec("clang", "bin/clang"),
+		Arg: []string{
+			"bin/clang", "-I../../include",
+			"-c", "../../src/hello.cc",
+		},
+		Env: []string{},
+		Cwd: proto.String("/b/c/w/out/Release"),
+		Input: []*gomapb.ExecReq_Input{
+			localFiles.mustInput(ctx, t, nil, "/b/c/w/src/hello.cc", "../../src/hello.cc"),
+			localFiles.mustInput(ctx, t, nil, "/b/c/w/include/hello.h", "../../include/hello.h"),
+		},
+		Subprogram:    []*gomapb.SubprogramSpec{},
+		RequesterInfo: &gomapb.RequesterInfo{},
+		HermeticMode:  proto.Bool(true),
+	}
+	t.Logf("second call, clear in-memory content in digest cache")
+	resp, err = cluster.adapter.Exec(ctx, req)
+	if err != nil {
+		t.Fatalf("Exec(ctx, req)=%v; %v; want nil error", resp, err)
+	}
+	if resp.GetError() != gomapb.ExecResp_OK {
+		t.Errorf("Exec error=%v; want=%v", resp.GetError(), gomapb.ExecResp_OK)
+	}
+	if len(resp.MissingInput) > 0 {
+		t.Fatalf("missing=%v; want no missing", resp.MissingInput)
+	}
+
+	localFiles.Dup("/b/c/w/src/hello.cc", "/b/c/w/src/hello2.cc")
+	localFiles.Dup("/b/c/w/include/hello.h", "/b/c/w/include/hello2.h")
+
+	req = &gomapb.ExecReq{
+		CommandSpec: clang.CommandSpec("clang", "bin/clang"),
+		Arg: []string{
+			"bin/clang", "-I../../include",
+			"-c", "../../src/hello2.cc",
+		},
+		Env: []string{},
+		Cwd: proto.String("/b/c/w/out/Release"),
+		Input: []*gomapb.ExecReq_Input{
+			// client sends hash only (fc==nil).
+			localFiles.mustInput(ctx, t, nil, "/b/c/w/src/hello2.cc", "../../src/hello2.cc"),
+			localFiles.mustInput(ctx, t, nil, "/b/c/w/include/hello2.h", "../../include/hello2.h"),
+		},
+		Subprogram:    []*gomapb.SubprogramSpec{},
+		RequesterInfo: &gomapb.RequesterInfo{},
+		HermeticMode:  proto.Bool(true),
+	}
+	t.Logf("reset cas and file-server cache")
+	cluster.rbe.cas = digest.NewStore()
+	for _, input := range req.Input {
+		_, err = cluster.cache.Put(ctx, &cachepb.PutReq{
+			Kv: &cachepb.KV{
+				Key: input.GetHashKey(),
+			},
+		})
+		if err != nil {
+			t.Fatalf("reset cache %s: %v", input, err)
+		}
+	}
+
+	t.Logf("third call, different filename")
+
+	resp, err = cluster.adapter.Exec(ctx, req)
+	if err != nil {
+		t.Fatalf("Exec(ctx, req)=%v; %v; want nil error", resp, err)
+	}
+	if resp.GetError() != gomapb.ExecResp_OK {
+		t.Errorf("Exec error=%v; want=%v", resp.GetError(), gomapb.ExecResp_OK)
+	}
+
+	wantMissing := []string{"../../src/hello2.cc", "../../include/hello2.h"}
+
+	if !cmp.Equal(resp.MissingInput, wantMissing) {
+		t.Fatalf("missing=%v; want=%v", resp.MissingInput, wantMissing)
+	}
+	if len(resp.MissingInput) != len(resp.MissingReason) {
+		t.Fatalf("missing: len(input)=%d != len(reason)=%d", len(resp.MissingInput), len(resp.MissingReason))
 	}
 }
 
@@ -737,7 +876,7 @@ func TestAdaptorHandleArbitraryToolchainSupport(t *testing.T) {
 		Subprogram:        []*gomapb.SubprogramSpec{},
 		ToolchainIncluded: proto.Bool(true),
 		ToolchainSpecs: []*gomapb.ToolchainSpec{
-			&gomapb.ToolchainSpec{
+			{
 				Path:         proto.String("../../bin/clang"),
 				Hash:         proto.String(clangHashKey),
 				Size:         clangToolchainInput.Content.FileSize,
@@ -865,7 +1004,7 @@ func TestAdaptorHandleArbitraryToolchainSupportNonCwdAgnostic(t *testing.T) {
 		Subprogram:        []*gomapb.SubprogramSpec{},
 		ToolchainIncluded: proto.Bool(true),
 		ToolchainSpecs: []*gomapb.ToolchainSpec{
-			&gomapb.ToolchainSpec{
+			{
 				Path:         proto.String("../../bin/clang"),
 				Hash:         proto.String(clangHashKey),
 				Size:         clangToolchainInput.Content.FileSize,

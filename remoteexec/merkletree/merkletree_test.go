@@ -286,13 +286,13 @@ func TestBuildInvalidEntry(t *testing.T) {
 	mt := New(posixpath.FilePath{}, "/path/to/root", ds)
 
 	for _, ent := range []Entry{
-		Entry{
+		{
 			// Invalid Entry: Absolute path.
 			Name:         "/usr/bin/third_party/llvm-build/Release+Asserts/bin/clang",
 			Data:         digest.Bytes("clang binary", []byte("clang binary")),
 			IsExecutable: true,
 		},
-		Entry{
+		{
 			// Invalid Entry: has both `Data` and `Target` fields set.
 			Name:   "third_party/llvm-build/Release+Asserts/bin/clang++",
 			Data:   digest.Bytes("clang binary", []byte("clang binary")),
@@ -312,41 +312,41 @@ func TestBuild(t *testing.T) {
 	mt := New(posixpath.FilePath{}, "/path/to/root", ds)
 
 	for _, ent := range []Entry{
-		Entry{
+		{
 			Name:         "third_party/llvm-build/Release+Asserts/bin/clang",
 			Data:         digest.Bytes("clang binary", []byte("clang binary")),
 			IsExecutable: true,
 		},
-		Entry{
+		{
 			Name:   "third_party/llvm-build/Release+Asserts/bin/clang++-1",
 			Target: "clang",
 		},
-		Entry{
+		{
 			Name:   "third_party/llvm-build/Release+Asserts/bin/clang++",
 			Target: "clang",
 		},
-		Entry{
+		{
 			Name: "base/build_time.h",
 			Data: digest.Bytes("base_time.h", []byte("byte_time.h content")),
 		},
-		Entry{
+		{
 			Name: "out/Release/obj/base",
 			// directory
 		},
-		Entry{
+		{
 			Name: "base/debug/debugger.cc",
 			Data: digest.Bytes("debugger.cc", []byte("debugger.cc content")),
 		},
-		Entry{
+		{
 			Name: "base/test/../macros.h",
 			Data: digest.Bytes("macros.h", []byte("macros.h content")),
 		},
 		// de-dup for same content http://b/124693412
-		Entry{
+		{
 			Name: "third_party/skia/include/private/SkSafe32.h",
 			Data: digest.Bytes("SkSafe32.h", []byte("SkSafe32.h content")),
 		},
-		Entry{
+		{
 			Name: "third_party/skia/include/private/SkSafe32.h",
 			Data: digest.Bytes("SkSafe32.h", []byte("SkSafe32.h content")),
 		},
@@ -422,11 +422,11 @@ func TestBuildDuplicateError(t *testing.T) {
 		{
 			desc: "dup file-file",
 			ents: []Entry{
-				Entry{
+				{
 					Name: "dir/file1",
 					Data: digest.Bytes("file1.1", []byte("file1.1")),
 				},
-				Entry{
+				{
 					Name: "dir/file1",
 					Data: digest.Bytes("file1.2", []byte("file1.2")),
 				},
@@ -435,11 +435,11 @@ func TestBuildDuplicateError(t *testing.T) {
 		{
 			desc: "dup file-symlink",
 			ents: []Entry{
-				Entry{
+				{
 					Name: "dir/foo",
 					Data: digest.Bytes("foo file", []byte("foo file")),
 				},
-				Entry{
+				{
 					Name:   "dir/foo",
 					Target: "bar",
 				},
@@ -448,11 +448,11 @@ func TestBuildDuplicateError(t *testing.T) {
 		{
 			desc: "dup file-dir",
 			ents: []Entry{
-				Entry{
+				{
 					Name: "dir/foo",
 					Data: digest.Bytes("foo file", []byte("foo file")),
 				},
-				Entry{
+				{
 					Name: "dir/foo",
 				},
 			},
@@ -460,11 +460,11 @@ func TestBuildDuplicateError(t *testing.T) {
 		{
 			desc: "dup symlink-dir",
 			ents: []Entry{
-				Entry{
+				{
 					Name:   "dir/foo",
 					Target: "bar",
 				},
-				Entry{
+				{
 					Name: "dir/foo",
 				},
 			},

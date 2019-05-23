@@ -432,7 +432,6 @@ func (c *ConfigLoader) Load(ctx context.Context, uri string, rc *cmdpb.RuntimeCo
 	if err != nil {
 		return nil, err
 	}
-	platform.RbeInstanceBasename = rc.RbeInstanceBasename
 	mergePlatformProperties(platform, rc.Platform)
 
 	confs, err := loadConfigs(ctx, c.StorageClient, uri, rc, platform)

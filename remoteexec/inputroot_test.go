@@ -90,27 +90,27 @@ func TestGetPathsWithNoCommonDir(t *testing.T) {
 
 func TestInputRootDir(t *testing.T) {
 	for _, tc := range []struct {
-		desc         string
-		req          *gomapb.ExecReq
-		argv0        string
-		allowOverlay bool
-		want         string
-		wantOverlay  bool
-		wantPathErr  bool
-		wantRootErr  bool
+		desc        string
+		req         *gomapb.ExecReq
+		argv0       string
+		allowChroot bool
+		want        string
+		wantChroot  bool
+		wantPathErr bool
+		wantRootErr bool
 	}{
 		{
 			desc: "basic",
 			req: &gomapb.ExecReq{
 				Cwd: proto.String("/b/c/b/linux/src/out/Release"),
 				Input: []*gomapb.ExecReq_Input{
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("../../base/logging.h"),
 					},
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("../../build/linux/debian_sid_amd64-sysroot/usr/include/stdio.h"),
 					},
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("gen/chrome/common/buildflags.h"),
 					},
 				},
@@ -123,13 +123,13 @@ func TestInputRootDir(t *testing.T) {
 			req: &gomapb.ExecReq{
 				Cwd: proto.String("/b/c/b/linux/src/out/Release"),
 				Input: []*gomapb.ExecReq_Input{
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("/b/c/b/linux/src/out/Release/../../base/logging.h"),
 					},
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("/b/c/b/linux/src/out/Release/../../build/linux/debian_sid_amd64-sysroot/usr/include/stdio.h"),
 					},
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("/b/c/b/linux/src/out/Release/gen/chrome/common/buildflags.h"),
 					},
 				},
@@ -142,13 +142,13 @@ func TestInputRootDir(t *testing.T) {
 			req: &gomapb.ExecReq{
 				Cwd: proto.String("/b/c/b/linux/src/out/Release"),
 				Input: []*gomapb.ExecReq_Input{
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("/b/c/b/linux/src/base/logging.h"),
 					},
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("/b/c/b/linux/src/build/linux/debian_sid_amd64-sysroot/usr/include/stdio.h"),
 					},
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("/b/c/b/linux/src/out/Release/gen/chrome/common/buildflags.h"),
 					},
 				},
@@ -161,16 +161,16 @@ func TestInputRootDir(t *testing.T) {
 			req: &gomapb.ExecReq{
 				Cwd: proto.String("/b/c/b/linux/src/out/Release"),
 				Input: []*gomapb.ExecReq_Input{
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("../../base/logging.h"),
 					},
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("../../build/linux/debian_sid_amd64-sysroot/usr/include/stdio.h"),
 					},
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("gen/chrome/common/buildflags.h"),
 					},
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("/usr/local/include/foo.h"),
 					},
 				},
@@ -183,13 +183,13 @@ func TestInputRootDir(t *testing.T) {
 			req: &gomapb.ExecReq{
 				Cwd: proto.String("b/c/b/linux/src/out/Release"),
 				Input: []*gomapb.ExecReq_Input{
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("../../base/logging.h"),
 					},
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("../../build/linux/debian_sid_amd64-sysroot/usr/include/stdio.h"),
 					},
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("gen/chrome/common/buildflags.h"),
 					},
 				},
@@ -202,10 +202,10 @@ func TestInputRootDir(t *testing.T) {
 			req: &gomapb.ExecReq{
 				Cwd: proto.String("/b/c/b/linux/src/out/Release"),
 				Input: []*gomapb.ExecReq_Input{
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("gen/chrome/common/buildflags.h"),
 					},
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("gen/chrome/common/buildflags.cc"),
 					},
 				},
@@ -218,10 +218,10 @@ func TestInputRootDir(t *testing.T) {
 			req: &gomapb.ExecReq{
 				Cwd: proto.String("/b/c/b/linux/src/out/Release"),
 				Input: []*gomapb.ExecReq_Input{
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("gen/chrome/common/buildflags.h"),
 					},
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("gen/chrome/common/buildflags.cc"),
 					},
 				},
@@ -234,16 +234,16 @@ func TestInputRootDir(t *testing.T) {
 			req: &gomapb.ExecReq{
 				Cwd: proto.String("/usr/home/foo/src/out/Release"),
 				Input: []*gomapb.ExecReq_Input{
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("../../base/logging.h"),
 					},
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("../../build/linux/debian_sid_amd64-sysroot/usr/include/stdio.h"),
 					},
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("gen/chrome/common/buildflags.h"),
 					},
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("/usr/lib/gcc/x86_64-linux-gnu/7/crtbegin.o"),
 					},
 				},
@@ -252,19 +252,19 @@ func TestInputRootDir(t *testing.T) {
 			wantRootErr: true,
 		},
 		{
-			desc: "wantOverlay for /usr",
+			desc: "wantChroot for /usr",
 			req: &gomapb.ExecReq{
 				Cwd: proto.String("/home/foo/src/out/Release"),
 				Input: []*gomapb.ExecReq_Input{
-					&gomapb.ExecReq_Input{
+					{
 						Filename: proto.String("/usr/include/config.h"),
 					},
 				},
 			},
-			argv0:        "../../third_party/llvm-build/Release+Asserts/bin/clang++",
-			want:         "/",
-			allowOverlay: true,
-			wantOverlay:  true,
+			argv0:       "../../third_party/llvm-build/Release+Asserts/bin/clang++",
+			want:        "/",
+			allowChroot: true,
+			wantChroot:  true,
 		},
 	} {
 		t.Logf("test case: %s", tc.desc)
@@ -278,15 +278,15 @@ func TestInputRootDir(t *testing.T) {
 		if err != nil {
 			t.Errorf("inputPaths(req, %q)=%v, %v; want nil error", tc.argv0, paths, err)
 		}
-		got, overlay, err := inputRootDir(posixpath.FilePath{}, paths, tc.allowOverlay)
+		got, needChroot, err := inputRootDir(posixpath.FilePath{}, paths, tc.allowChroot)
 		if tc.wantRootErr {
 			if err == nil {
-				t.Errorf("inputRootDir(files)=%v, %t, nil; want err", got, overlay)
+				t.Errorf("inputRootDir(files)=%v, %t, nil; want err", got, needChroot)
 			}
 			continue
 		}
-		if err != nil || got != tc.want || overlay != tc.wantOverlay {
-			t.Errorf("inputRootDir(files)=%v, %t, %v; want %v, %t, nil", got, overlay, err, tc.want, tc.wantOverlay)
+		if err != nil || got != tc.want || needChroot != tc.wantChroot {
+			t.Errorf("inputRootDir(files)=%v, %t, %v; want %v, %t, nil", got, needChroot, err, tc.want, tc.wantChroot)
 		}
 	}
 }
@@ -431,55 +431,6 @@ func TestHasPrefixDir(t *testing.T) {
 		got := hasPrefixDir(tc.p, tc.prefix)
 		if got != tc.want {
 			t.Errorf("hasPrefixDir(%s,%s) = %t; want %t", tc.p, tc.prefix, got, tc.want)
-		}
-	}
-}
-
-func TestVerifyPathsForOverlay(t *testing.T) {
-	for _, tc := range []struct {
-		paths     []string
-		wantError bool
-	}{
-		{
-			paths:     []string{"/home/foo/"},
-			wantError: false,
-		},
-		{
-			paths:     []string{"/bin/sh"},
-			wantError: true,
-		},
-		{
-			paths:     []string{"/sbin/shutdown"},
-			wantError: true,
-		},
-		{
-			paths:     []string{"/lib/libc.so.6"},
-			wantError: true,
-		},
-		{
-			paths:     []string{"/lib64/ld-linux-x86-64.so.2"},
-			wantError: true,
-		},
-		{
-			paths:     []string{"/dev/urandom"},
-			wantError: true,
-		},
-		{
-			paths:     []string{"/workdir"},
-			wantError: true,
-		},
-		// has non-blacklist and blacklist.
-		{
-			paths:     []string{"/home", "/workdir"},
-			wantError: true,
-		},
-	} {
-		err := verifyPathsForOverlay(tc.paths)
-		if err == nil && tc.wantError {
-			t.Errorf("verifyPathsForOverlay(%q) = nil; want error", tc.paths)
-		}
-		if err != nil && !tc.wantError {
-			t.Errorf("verifyPathsForOverlay(%q) = %v; want nil", tc.paths, err)
 		}
 	}
 }

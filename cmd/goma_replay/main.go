@@ -15,9 +15,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -33,6 +35,8 @@ import (
 	"github.com/golang/protobuf/proto"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
+	googleoauth2 "google.golang.org/api/oauth2/v2"
 
 	"go.chromium.org/goma/server/httprpc"
 	"go.chromium.org/goma/server/log"
@@ -141,43 +145,84 @@ func oauth2Client(ctx context.Context, fname string) (*http.Client, string, erro
 		return nil, "", fmt.Errorf("oauth2 token %s: %v", fname, err)
 	}
 	logger.Debugf("access token: %s", token.AccessToken)
-	resp, err := http.Get(fmt.Sprintf("https://oauth2.googleapis.com/tokeninfo?access_token=%s", token.AccessToken))
+
+	s, err := googleoauth2.NewService(ctx)
 	if err != nil {
-		return nil, "", fmt.Errorf("%s: tokeninfo %v", fname, err)
+		return nil, "", err
 	}
-	defer resp.Body.Close()
-	b, err = ioutil.ReadAll(resp.Body)
+	tokeninfo, err := s.Tokeninfo().Context(ctx).AccessToken(token.AccessToken).Do()
 	if err != nil {
-		return nil, "", fmt.Errorf("%s: tokeninfo body %v", fname, err)
-	}
-	var tokeninfo struct {
-		Email string `json:"email"`
-	}
-	err = json.Unmarshal(b, &tokeninfo)
-	if err != nil {
-		return nil, "", fmt.Errorf("%s: tokeninfo json %v", fname, err)
+		return nil, "", err
 	}
 	return c.Client(ctx, token), tokeninfo.Email, nil
 }
 
+func oauth2ServiceAccountClient(ctx context.Context, fname string) (*http.Client, string, error) {
+	b, err := ioutil.ReadFile(fname)
+	if err != nil {
+		return nil, "", err
+	}
+	c, err := google.JWTConfigFromJSON(b, googleoauth2.UserinfoEmailScope)
+	if err != nil {
+		return nil, "", err
+	}
+	return c.Client(ctx), c.Email, nil
+}
+
 func newClient(ctx context.Context) (*http.Client, string, error) {
 	logger := log.FromContext(ctx)
-	paths := []string{os.Getenv("GOMA_OAUTH2_CONFIG_FILE")}
-	if *asInternal {
-		paths = append(paths, os.ExpandEnv("$HOME/.goma_oauth2_config"))
-	} else {
-		paths = append(paths, os.ExpandEnv("$HOME/.goma_client_oauth2_config"))
-	}
-	for _, p := range paths {
-		logger.Infof("oauth2 config: %s", p)
-		c, email, err := oauth2Client(ctx, p)
+
+	// client http_init.cc: InitHttpClientOptions
+	for _, ca := range []struct {
+		desc      string
+		newClient func(context.Context) (*http.Client, string, error)
+	}{
+		// TODO: GOMA_HTTP_AUTHORIZATION_FILE
+		{
+			desc: "GOMA_OAUTH2_CONFIG_FILE",
+			newClient: func(ctx context.Context) (*http.Client, string, error) {
+				fname := os.Getenv("GOMA_OAUTH2_CONFIG_FILE")
+				if fname == "" {
+					return nil, "", errors.New("no GOMA_OAUTH2_CONFIG_FILE")
+				}
+				logger.Infof("oauth2 config: %s", fname)
+				return oauth2Client(ctx, fname)
+			},
+		},
+		{
+			desc: "GOMA_SERVICE_ACCOUNT_JSON_FILE",
+			newClient: func(ctx context.Context) (*http.Client, string, error) {
+				fname := os.Getenv("GOMA_SERVICE_ACCOUNT_JSON_FILE")
+				if fname == "" {
+					return nil, "", errors.New("no GOMA_SERVICE_ACCOUNT_JSON_FILE")
+				}
+				logger.Infof("service account: %s", fname)
+				return oauth2ServiceAccountClient(ctx, fname)
+			},
+		},
+		// TODO: GOMA_USE_GCE_SERVICE_ACCOUNT
+		// TODO: LUCI_CONTEXT
+		{
+			desc: "default goma oauth2 config file",
+			newClient: func(ctx context.Context) (*http.Client, string, error) {
+				fname := os.ExpandEnv("$HOME/.goma_client_oauth2_config")
+				if *asInternal {
+					fname = os.ExpandEnv("$HOME/.goma_oauth2_config")
+				}
+				logger.Infof("oauth2 config: %s", fname)
+				return oauth2Client(ctx, fname)
+			},
+		},
+	} {
+		logger.Infof("client auth %s", ca.desc)
+		c, email, err := ca.newClient(ctx)
 		if err != nil {
-			logger.Warnf("oauth2 config %s: %v", p, err)
+			logger.Warnf("client auth %s: %v", ca.desc, err)
 			continue
 		}
 		return c, email, nil
 	}
-	return nil, "", fmt.Errorf("no goma oauth2 config avaialble: %s", paths)
+	return nil, "", errors.New("no goma auth avaialble")
 }
 
 type target struct {
@@ -230,6 +275,48 @@ func newTargetFromEnv(ctx context.Context) (target, error) {
 	return t, nil
 }
 
+type dialer struct {
+	d     *net.Dialer
+	mu    sync.Mutex
+	addrs map[string]string
+}
+
+func (d *dialer) resolve(ctx context.Context, host string) (string, error) {
+	if a, ok := d.addrs[host]; ok {
+		return a, nil
+	}
+	logger := log.FromContext(ctx)
+	addrs, err := net.LookupHost(host)
+	if err != nil {
+		logger.Warnf("resolve failed %q: %q", host, err)
+		return "", err
+	}
+	logger.Infof("resolve %q => %q", host, addrs[0])
+	d.mu.Lock()
+	d.addrs[host] = addrs[0]
+	d.mu.Unlock()
+	return addrs[0], nil
+}
+
+func (d *dialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+	addr, err := d.resolve(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	for i := 0; i < 5; i++ {
+		conn, err := d.d.DialContext(ctx, network, net.JoinHostPort(addr, port))
+		if err != nil {
+			continue
+		}
+		return conn, nil
+	}
+	return nil, fmt.Errorf("too many retry to dial to %s:%s", network, address)
+}
+
 func main() {
 	flag.Parse()
 	ctx := context.Background()
@@ -252,6 +339,24 @@ func main() {
 		logger.Errorf(format, args...)
 	}
 
+	d := &dialer{
+		d: &net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		},
+		addrs: make(map[string]string),
+	}
+
+	// https://golang.org/pkg/net/http/#RoundTripper
+	http.DefaultTransport = &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           d.DialContext,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+
 	c, email, err := newClient(ctx)
 	if err != nil {
 		fatalf("client: %v", err)
@@ -262,6 +367,11 @@ func main() {
 		fatalf("target: %v", err)
 	}
 	fmt.Println("target:", targ)
+	// Warm up the resolver cache
+	_, err = d.resolve(ctx, targ.host)
+	if err != nil {
+		fatalf("resolver warm up: %v", err)
+	}
 	reqs, err := loadRequestData(ctx, *dataSourceDir)
 	if err != nil {
 		fatalf("request data: %v", err)

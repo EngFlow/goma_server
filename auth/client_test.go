@@ -166,7 +166,7 @@ func TestAuthExpire(t *testing.T) {
 			Path: "/path",
 		},
 		Header: map[string][]string{
-			"Authorization": []string{authorization},
+			"Authorization": {authorization},
 		},
 	}
 	ch := make(chan chan bool)
@@ -325,7 +325,7 @@ func TestAuthCheck(t *testing.T) {
 	email := "example@google.com"
 	a1 := &Auth{
 		cache: map[string]*authInfo{
-			"Bearer test": &authInfo{
+			"Bearer test": {
 				resp: &authpb.AuthResp{
 					Email:     email,
 					ExpiresAt: willExpireInHour,
@@ -340,7 +340,7 @@ func TestAuthCheck(t *testing.T) {
 	}
 	testReq := &http.Request{
 		Header: map[string][]string{
-			"Authorization": []string{"Bearer test"},
+			"Authorization": {"Bearer test"},
 		},
 		// this is needed to make trace work without nil access.
 		URL: &url.URL{

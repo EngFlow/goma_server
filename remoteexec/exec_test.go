@@ -14,15 +14,15 @@ import (
 
 func TestSortMissing(t *testing.T) {
 	inputs := []*gomapb.ExecReq_Input{
-		&gomapb.ExecReq_Input{
+		{
 			Filename: proto.String("../src/hello.cc"),
 			HashKey:  proto.String("hash-hello.cc"),
 		},
-		&gomapb.ExecReq_Input{
+		{
 			Filename: proto.String("../include/base.h"),
 			HashKey:  proto.String("hash-base.h"),
 		},
-		&gomapb.ExecReq_Input{
+		{
 			Filename: proto.String("../include/hello.h"),
 			HashKey:  proto.String("hash-hello.h"),
 		},

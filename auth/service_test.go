@@ -188,7 +188,7 @@ func TestAuth(t *testing.T) {
 	s := &Service{
 		CheckToken: checkToken,
 		tokenCache: map[string]*tokenCacheEntry{
-			key: &tokenCacheEntry{
+			key: {
 				TokenInfo: ti,
 				Token:     token,
 			},

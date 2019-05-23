@@ -42,22 +42,22 @@ func (f fakeAccount) Token(ctx context.Context) (*oauth2.Token, error) {
 func TestChecker(t *testing.T) {
 	config := &pb.ACL{
 		Groups: []*pb.Group{
-			&pb.Group{
+			{
 				Id:     "service-account",
 				Emails: []string{"foo@project.iam.gserviceaccount.com"},
 			},
-			&pb.Group{
+			{
 				Id:             "chrome-bot",
 				Emails:         []string{"goma-client@chrome-infra-auth.iam.gserviceaccount.com"},
 				ServiceAccount: "chrome-bot-service-account",
 			},
-			&pb.Group{
+			{
 				Id:             "googler",
 				Audience:       "687418631491-r6m1c3pr0lth5atp4ie07f03ae8omefc.apps.googleusercontent.com",
 				Domains:        []string{"google.com"},
 				ServiceAccount: "googler-service-account",
 			},
-			&pb.Group{
+			{
 				Id:             "contributor",
 				Audience:       "687418631491-r6m1c3pr0lth5atp4ie07f03ae8omefc.apps.googleusercontent.com",
 				Emails:         []string{"foo@gmail.com"},
@@ -82,58 +82,58 @@ func TestChecker(t *testing.T) {
 	}
 
 	testCases := map[string]*testData{
-		"service-account": &testData{
+		"service-account": {
 			tokenInfo: &auth.TokenInfo{
 				Email:    "foo@project.iam.gserviceaccount.com",
 				Audience: "123456-xxxxxx.apps.googleusercontent.com",
 			},
 		},
-		"chrome-bot": &testData{
+		"chrome-bot": {
 			tokenInfo: &auth.TokenInfo{
 				Email:    "goma-client@chrome-infra-auth.iam.gserviceaccount.com",
 				Audience: "7890-xxxxxx.apps.googleusercontent.com",
 			},
 		},
-		"googler": &testData{
+		"googler": {
 			tokenInfo: &auth.TokenInfo{
 				Email:    "someone@google.com",
 				Audience: "687418631491-r6m1c3pr0lth5atp4ie07f03ae8omefc.apps.googleusercontent.com",
 			},
 		},
-		"malicious-googler": &testData{
+		"malicious-googler": {
 			tokenInfo: &auth.TokenInfo{
 				Email:    "malicious@google.com",
 				Audience: "687418631491-r6m1c3pr0lth5atp4ie07f03ae8omefc.apps.googleusercontent.com",
 			},
 		},
-		"contributor": &testData{
+		"contributor": {
 			tokenInfo: &auth.TokenInfo{
 				Email:    "foo@gmail.com",
 				Audience: "687418631491-r6m1c3pr0lth5atp4ie07f03ae8omefc.apps.googleusercontent.com",
 			},
 		},
-		"unknown service account": &testData{
+		"unknown service account": {
 			tokenInfo: &auth.TokenInfo{
 				Email:    "unknown-service-account@chrome-infra-auth.iam.gserviceaccount.com",
 				Audience: "7890-xxxxxx.apps.googleusercontent.com",
 			},
 			errCode: codes.PermissionDenied,
 		},
-		"unknown audience": &testData{
+		"unknown audience": {
 			tokenInfo: &auth.TokenInfo{
 				Email:    "someone@google.com",
 				Audience: "187410957766-f28toeml294bk5mm7nr2jn2rup1rvtjj.apps.googleusercontent.com",
 			},
 			errCode: codes.PermissionDenied,
 		},
-		"unknown user": &testData{
+		"unknown user": {
 			tokenInfo: &auth.TokenInfo{
 				Email:    "unknown.user@gmail.com",
 				Audience: "687418631491-r6m1c3pr0lth5atp4ie07f03ae8omefc.apps.googleusercontent.com",
 			},
 			errCode: codes.PermissionDenied,
 		},
-		"contributor2": &testData{
+		"contributor2": {
 			tokenInfo: &auth.TokenInfo{
 				Email:    "contributor@gmail.com",
 				Audience: "687418631491-r6m1c3pr0lth5atp4ie07f03ae8omefc.apps.googleusercontent.com",
@@ -180,7 +180,7 @@ func TestChecker(t *testing.T) {
 
 	t.Logf("reject bad googler")
 	config.Groups = append([]*pb.Group{
-		&pb.Group{
+		{
 			Id:       "bad-googler",
 			Audience: "687418631491-r6m1c3pr0lth5atp4ie07f03ae8omefc.apps.googleusercontent.com",
 			Emails:   []string{"malicious@google.com"},
