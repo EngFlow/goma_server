@@ -291,7 +291,7 @@ func (f *fakeCluster) pushToolchains(ctx context.Context, tc *fakeToolchain) err
 			RemoteexecPlatform: tc.RemoteexecPlatform,
 		})
 	}
-	_, err := f.adapter.Inventory.Configure(ctx, config)
+	err := f.adapter.Inventory.Configure(ctx, config)
 	return err
 }
 
@@ -314,7 +314,7 @@ func (f *fakeCluster) pushPlatform(ctx context.Context, containerImage string, d
 			Dimensions: dimensions,
 		},
 	}
-	_, err := f.adapter.Inventory.Configure(ctx, config)
+	err := f.adapter.Inventory.Configure(ctx, config)
 	return err
 }
 

@@ -35,8 +35,8 @@ var (
 		"Toolchain selection",
 		stats.UnitDimensionless)
 
-	selectorKey = mustTagNewKey("selector")
-	resultKey   = mustTagNewKey("result")
+	selectorKey = tag.MustNewKey("selector")
+	resultKey   = tag.MustNewKey("result")
 
 	// DefaultToolchainViews are the default views provided by this package.
 	// You need to register the view for data to actually be collected.
@@ -150,7 +150,7 @@ type platformConfig struct {
 }
 
 // Configure sets config in the inventory.
-func (in *Inventory) Configure(ctx context.Context, cfgs *cmdpb.ConfigResp) (int, error) {
+func (in *Inventory) Configure(ctx context.Context, cfgs *cmdpb.ConfigResp) error {
 	ctx, span := trace.StartSpan(ctx, "go.chromium.org/goma/server/exec.Service.Configure")
 	defer span.End()
 	logger := log.FromContext(ctx)
@@ -212,7 +212,10 @@ func (in *Inventory) Configure(ctx context.Context, cfgs *cmdpb.ConfigResp) (int
 	in.addrs = newAddrs
 	in.configs = newConfigs
 	in.platformConfigs = newPlatformConfigs
-	return len(in.configs), nil
+	if len(in.configs) == 0 && len(in.platformConfigs) == 0 {
+		return fmt.Errorf("no available config in %s", cfgs.VersionId)
+	}
+	return nil
 }
 
 func (in *Inventory) VersionID() string {
@@ -496,6 +499,8 @@ func (in *Inventory) pickFromExecReq(ctx context.Context, req *gomapb.ExecReq, r
 	cmdSel, _, err := fromCommandSpec(req.GetCommandSpec())
 	if err != nil {
 		resp.Error = gomapb.ExecResp_BAD_REQUEST.Enum()
+		resp.ErrorMessage = append(resp.ErrorMessage, fmt.Sprintf("unexpected CommandSpec %s", req.GetCommandSpec()))
+
 		return nil, nil, fmt.Errorf("normalize %v: %v", req.GetCommandSpec(), err)
 	}
 

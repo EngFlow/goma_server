@@ -346,6 +346,7 @@ func Handler(name string, req, resp proto.Message, h func(context.Context, proto
 		// see below if status.Code(err) == codes.DeadlineExceeded case.
 		timeouts := []time.Duration{40 * time.Second, 1 * time.Minute, 3 * time.Minute, 5 * time.Minute}
 		var resp proto.Message
+		authOK := false
 		err = opt.retry.Do(ctx, func() error {
 			pctx := ctx
 			ctx, cancel := context.WithTimeout(ctx, timeouts[0])
@@ -354,11 +355,19 @@ func Handler(name string, req, resp proto.Message, h func(context.Context, proto
 			if opt.Auth != nil {
 				ctx, err = opt.Auth.Auth(ctx, r)
 				if err != nil {
+					if authOK {
+						// if once auth ok, then it failed because client access token was expired.
+						code := http.StatusGatewayTimeout
+						http.Error(w, fmt.Sprintf("auth token expired %s", RemoteAddr(r)), code)
+						logger.Errorf("auth token expired %s: %d %s", r.URL.Path, code, http.StatusText(code))
+						return err
+					}
 					code := http.StatusUnauthorized
 					http.Error(w, fmt.Sprintf("auth failed %s: %v", RemoteAddr(r), err), code)
 					logger.Errorf("auth error %s: %d %s: %v", r.URL.Path, code, http.StatusText(code), err)
 					return err
 				}
+				authOK = true
 			}
 			resp, err = h(ctx, req)
 			if opt.Auth != nil && status.Code(err) == codes.Unauthenticated {

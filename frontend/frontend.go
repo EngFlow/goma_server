@@ -41,8 +41,8 @@ var (
 	// the value of these tag can be controlled by the client,
 	// so you need to watch out for potentially generating high-cardinality
 	// labels in your metrics backend if you use this tag in views.
-	userAgentCommitHashKey = mustTagNewKey("useragent.hash")
-	userAgentCommitTimeKey = mustTagNewKey("useragent.time")
+	userAgentCommitHashKey = tag.MustNewKey("useragent.hash")
+	userAgentCommitTimeKey = tag.MustNewKey("useragent.time")
 
 	// user-agent format
 	//  compiler-proxy built by <username> at <commitHash>@<commitTime>
@@ -72,15 +72,6 @@ func init() {
 	if err != nil {
 		hostname = "unknown"
 	}
-}
-
-func mustTagNewKey(name string) tag.Key {
-	k, err := tag.NewKey(name)
-	if err != nil {
-		logger := log.FromContext(context.Background())
-		logger.Fatal(err)
-	}
-	return k
 }
 
 func parseUserAgent(header string) (commitHash, commitTime string, err error) {

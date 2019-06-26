@@ -69,29 +69,39 @@ var (
 const maxMsgSize = 64 * 1024 * 1024
 
 type memoryCheck struct {
-	Threshold int64
+	hardThreshold int64
+	softThreshold int64
 }
 
+// Admit checks we can accept new request.
+// if memory usage is less than mc.softThreshold, it will accept.
+// Otherwise, it will try to run GC to release memory.
+// if memory usage is [mc.softThreshold, mc.hardThreshold), it returns
+// Unavailable error.
+// if memory usage is more than mc.hardThreshold, it returns ResourceExausted.
 func (mc memoryCheck) Admit(req *http.Request) error {
-	if mc.Threshold <= 0 {
+	if mc.softThreshold <= 0 {
 		return nil
 	}
 	rss := server.ResidentMemorySize()
-	if rss <= mc.Threshold {
+	if rss <= mc.softThreshold {
 		return nil
 	}
 	ctx := req.Context()
 	logger := log.FromContext(ctx)
-	logger.Warnf("memory size %d > threshold:%d", rss, mc.Threshold)
+	logger.Warnf("memory size %d > soft threshold:%d", rss, mc.softThreshold)
 	rss = server.GC(ctx)
-	if rss <= mc.Threshold {
+	if rss <= mc.softThreshold {
 		logger.Infof("GC reduced memory size to %d", rss)
 		return nil
 	}
-	m := fmt.Sprintf("memory size %d > threshold:%d", rss, mc.Threshold)
+	m := fmt.Sprintf("memory size %d > soft threshold:%d: over=%d", rss, mc.softThreshold, rss-mc.softThreshold)
 	healthz.SetUnhealthy(m)
 	logger.Errorf("GC couldn't reduce memory size: %s", m)
-	return status.Errorf(codes.ResourceExhausted, "server resource exhausted")
+	if mc.hardThreshold > 0 && rss > mc.hardThreshold {
+		return status.Errorf(codes.ResourceExhausted, "server resource exhausted")
+	}
+	return status.Errorf(codes.Unavailable, "server unavailable")
 }
 
 func newMainServer(mux *http.ServeMux) server.Server {
@@ -166,9 +176,10 @@ func main() {
 		if err != nil {
 			logger.Errorf("unknown memory limit: %v", err)
 		} else {
-			memoryChecker.Threshold = limit - q.Value()
+			memoryChecker.hardThreshold = limit - q.Value()
+			memoryChecker.softThreshold = limit - 2*q.Value()
 			limitq := k8sapi.NewQuantity(limit, k8sapi.BinarySI)
-			logger.Infof("memory check threshold: limit:%s - margin:%s = %d", limitq, q, memoryChecker.Threshold)
+			logger.Infof("memory check threshold: limit:%s - margin:%s = hard:%d, soft:%d", limitq, q, memoryChecker.hardThreshold, memoryChecker.softThreshold)
 		}
 	}
 

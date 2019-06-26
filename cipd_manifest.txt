@@ -1,0 +1,21 @@
+# Copyright 2019 Google Inc. All Rights Reserved.
+
+# Pin resolved versions in the repo, to reduce trust in the CIPD backend.
+#
+# To regenerate them (after modifying this file):
+#   cipd ensure-file-resolve -ensure-file cipd_manifest.txt
+$ResolvedVersions cipd_manifest.versions
+
+# Fully supported plaforms.
+$VerifiedPlatform linux-amd64
+
+# You can check available cipd package in:
+# https://chrome-infra-packages.appspot.com/
+
+# go
+infra/go/${platform} version:1.12.5
+
+# protoc
+# If the version you want is missing, please follow the instruction in:
+# https://chromium.googlesource.com/infra/infra/+/refs/heads/master/bootstrap/cipd/doc/infra/tools/protoc/
+infra/tools/protoc/${platform} protobuf_version:v3.7.0

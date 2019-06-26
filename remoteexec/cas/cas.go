@@ -10,18 +10,21 @@ import (
 	"sort"
 	"time"
 
+	rpb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 	"go.opencensus.io/trace"
+	bpb "google.golang.org/genproto/googleapis/bytestream"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-
-	rpb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
-
-	bpb "google.golang.org/genproto/googleapis/bytestream"
 
 	"go.chromium.org/goma/server/log"
 	"go.chromium.org/goma/server/remoteexec/datasource"
 	"go.chromium.org/goma/server/remoteexec/digest"
 	"go.chromium.org/goma/server/rpc"
+)
+
+const (
+	// DefaultBatchLimit is bytes limit for cas BatchUploadBlobs.
+	DefaultBatchLimit = 4 * 1024 * 1024
 )
 
 // Client is a client of cas service.
@@ -112,8 +115,7 @@ func (c CAS) Upload(ctx context.Context, instance string, blobs ...*rpb.Digest) 
 	// TODO: better packing
 	var i int
 
-	const defaultBatchLimit = 4 * 1024 * 1024
-	batchLimit := int64(defaultBatchLimit)
+	batchLimit := int64(DefaultBatchLimit)
 	if c.CacheCapabilities != nil && c.CacheCapabilities.MaxBatchTotalSizeBytes > 0 {
 		batchLimit = c.CacheCapabilities.MaxBatchTotalSizeBytes
 	}

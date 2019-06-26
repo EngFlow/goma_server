@@ -11,7 +11,6 @@ import (
 	"go.opencensus.io/stats/view"
 	"go.opencensus.io/tag"
 
-	"go.chromium.org/goma/server/log"
 	gomapb "go.chromium.org/goma/server/proto/api"
 )
 
@@ -21,7 +20,7 @@ var (
 		"exec request api-error",
 		stats.UnitDimensionless)
 
-	apiErrorKey = mustTagNewKey("api-error")
+	apiErrorKey = tag.MustNewKey("api-error")
 
 	// DefaultViews are the default views provided by this package.
 	// You need to register the view for data to actually be collected.
@@ -45,15 +44,6 @@ var (
 		},
 	}
 )
-
-func mustTagNewKey(name string) tag.Key {
-	k, err := tag.NewKey(name)
-	if err != nil {
-		logger := log.FromContext(context.Background())
-		logger.Fatal(err)
-	}
-	return k
-}
 
 func apiErrorValue(resp *gomapb.ExecResp) string {
 	if errVal := resp.GetError(); errVal != gomapb.ExecResp_OK {

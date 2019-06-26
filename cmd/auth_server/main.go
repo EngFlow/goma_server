@@ -58,7 +58,7 @@ var (
 var (
 	configUpdate = stats.Int64("go.chromium.org/goma/server/cmd/auth_server.acl-updates", "acl updates", stats.UnitDimensionless)
 
-	configStatusKey = mustTagNewKey("status")
+	configStatusKey = tag.MustNewKey("status")
 
 	configViews = []*view.View{
 		{
@@ -71,15 +71,6 @@ var (
 		},
 	}
 )
-
-func mustTagNewKey(name string) tag.Key {
-	k, err := tag.NewKey(name)
-	if err != nil {
-		logger := log.FromContext(context.Background())
-		logger.Fatal(err)
-	}
-	return k
-}
 
 func recordConfigUpdate(ctx context.Context, err error) {
 	logger := log.FromContext(ctx)

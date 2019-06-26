@@ -3,14 +3,14 @@
 
 set -e
 
-sdkdir="$1"
-if [ ! -d "${sdkdir}" ]; then
-  echo "usage: $0 sdkdir" >&2
+script_dir=$(cd $(dirname $0); pwd)
+sdk_dir="$1"
+if [ ! -d "${sdk_dir}" ]; then
+  echo "usage: $0 sdk_dir" >&2
   exit 1
 fi
-mkdir -p "${sdkdir}/go/bin"
 
-# assume host has ca-certificates, cur, git and gcc.
+# assume host has ca-certificates, curl, git and gcc.
 pkg_missing=false
 for pkg in ca-certificates curl git gcc; do
   if ! dpkg-query -s "$pkg" >/dev/null; then
@@ -23,29 +23,15 @@ if $pkg_missing; then
   exit 1
 fi
 
-# https://repo1.maven.org/maven2/com/google/protobuf/protoc/${protoc}/protoc-${protoc}-linux-x86_64.exe.sha1
-protoc=3.7.0
-protocsha1=b8f4dea2467de954ac0aa399f2d60ea36c73a5ae
+cipd_dir="${sdk_dir}/.cipd_bin"
+cipd_manifest="$script_dir/cipd_manifest.txt"
+mkdir -p "$cipd_dir"
+cipd ensure -log-level warning \
+  -ensure-file "$cipd_manifest"\
+  -root "$cipd_dir"
 
-echo "${protocsha1} ${sdkdir}/go/bin/protoc" > /tmp/protoc.sha1
-if ! sha1sum --check /tmp/protoc.sha1; then
-  curl -o "${sdkdir}/go/bin/protoc" https://repo1.maven.org/maven2/com/google/protobuf/protoc/${protoc}/protoc-${protoc}-linux-x86_64.exe
-  sha1sum --check /tmp/protoc.sha1
-fi
-chmod a+x "${sdkdir}/go/bin/protoc"
-rm -f /tmp/protoc.sha1
+(cd "$sdk_dir"; rm -f go; ln -s .cipd_bin/bin/go)
+(cd "$sdk_dir"; rm -f protoc; ln -s .cipd_bin/protoc)
 
-# TODO: use 'go get golang.org/dl/${go}' ?
-go=go1.12.5
-gosha256=aea86e3c73495f205929cfebba0d63f1382c8ac59be081b6351681415f4063cf
-goarchive="${sdkdir}/${go}.linux-amd64.tar.gz"
-echo "${gosha256} ${goarchive}" > "/tmp/${go}.linux-amd64.tar.gz.sha256"
-if ! sha256sum --check "/tmp/${go}.linux-amd64.tar.gz.sha256"; then
-  curl -o "${goarchive}" "https://storage.googleapis.com/golang/${go}.linux-amd64.tar.gz"
-  sha256sum --check "/tmp/${go}.linux-amd64.tar.gz.sha256"
-  tar -C "${sdkdir}" -xzf "${goarchive}"
-fi
-rm -f "/tmp/${go}.linux-amd64.tar.gz.sha256"
-
-echo "I: protoc-${protoc} and ${go} are installed in ${sdkdir}"
-echo "I: set ${sdkdir}/go/bin in \$PATH"
+echo "I: protoc and go are installed in ${sdk_dir}"
+echo "I: set ${sdk_dir} in \$PATH"

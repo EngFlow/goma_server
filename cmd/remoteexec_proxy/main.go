@@ -23,9 +23,9 @@ import (
 	"strings"
 	"time"
 
-	rpb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
-
 	"cloud.google.com/go/storage"
+	rpb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
+	"github.com/golang/protobuf/proto"
 	"go.opencensus.io/plugin/ocgrpc"
 	"go.opencensus.io/trace"
 	"google.golang.org/api/option"
@@ -68,6 +68,8 @@ var (
 	insecureRemoteexec     = flag.Bool("insecure-remoteexec", false, "insecure grpc for remoteexec API")
 
 	fileCacheBucket = flag.String("file-cache-bucket", "", "file cache bucking store bucket")
+
+	execConfigFile = flag.String("exec-config-file", "", "exec inventory config file")
 
 	traceProjectID = flag.String("trace-project-id", "", "project id for cloud tracing")
 	traceFraction  = flag.Float64("trace-sampling-fraction", 1.0, "sampling fraction for stackdriver trace")
@@ -153,17 +155,6 @@ func (a defaultACL) Load(ctx context.Context) (*authpb.ACL, error) {
 	}, nil
 }
 
-func newDigestCache(ctx context.Context) remoteexec.DigestCache {
-	logger := log.FromContext(ctx)
-	addr, err := redis.AddrFromEnv()
-	if err != nil {
-		logger.Warnf("redis disabled for gomafile-digest: %v", err)
-		return digest.NewCache(nil)
-	}
-	logger.Infof("redis enabled for gomafile-digest: %v", addr)
-	return digest.NewCache(redis.NewClient(ctx, addr, "gomafile-digest:"))
-}
-
 type localBackend struct {
 	ExecService execpb.ExecServiceServer
 	FileService filepb.FileServiceServer
@@ -203,6 +194,29 @@ func (b localBackend) LookupFile() http.Handler {
 
 func (b localBackend) Execlog() http.Handler {
 	return execlogrpc.Handler(execlogService{}, httprpc.Timeout(1*time.Minute), httprpc.WithAuth(b.Auth))
+}
+
+func readConfigResp(fname string) (*cmdpb.ConfigResp, error) {
+	b, err := ioutil.ReadFile(fname)
+	if err != nil {
+		return nil, err
+	}
+	resp := &cmdpb.ConfigResp{}
+	err = proto.UnmarshalText(string(b), resp)
+	if err != nil {
+		return nil, err
+	}
+	// fix target address etc.
+	for _, c := range resp.Configs {
+		if c.Target == nil {
+			c.Target = &cmdpb.Target{}
+		}
+		c.Target.Addr = *remoteexecAddr
+		if c.BuildInfo == nil {
+			c.BuildInfo = &cmdpb.BuildInfo{}
+		}
+	}
+	return resp, nil
 }
 
 func main() {
@@ -309,14 +323,25 @@ func main() {
 	}
 	defer reConn.Close()
 
+	var digestCache remoteexec.DigestCache
+	redisAddr, err := redis.AddrFromEnv()
+	if err != nil {
+		logger.Warnf("redis disabled for gomafile-digest: %v", err)
+		digestCache = digest.NewCache(nil)
+	} else {
+		logger.Infof("redis enabled for gomafile-digest: %v", redisAddr)
+		digestCache = digest.NewCache(redis.NewClient(ctx, redisAddr, "gomafile-digest:"))
+	}
+
 	re := &remoteexec.Adapter{
 		InstancePrefix: path.Dir(*remoteInstanceName),
 		ExecTimeout:    15 * time.Minute,
 		Client: remoteexec.Client{
 			ClientConn: reConn,
 		},
-		GomaFile:    fileServiceClient,
-		DigestCache: newDigestCache(ctx),
+		InsecureClient: *insecureRemoteexec,
+		GomaFile:       fileServiceClient,
+		DigestCache:    digestCache,
 		ToolDetails: &rpb.ToolDetails{
 			ToolName:    "remoteexec_proxy",
 			ToolVersion: "0.0.0-experimental",
@@ -324,7 +349,6 @@ func main() {
 		FileLookupConcurrency: 2,
 	}
 
-	// TODO: non arbitrary toolchain support.
 	configResp := &cmdpb.ConfigResp{
 		VersionId: time.Now().UTC().Format(time.RFC3339),
 		Configs: []*cmdpb.Config{
@@ -348,7 +372,15 @@ func main() {
 			},
 		},
 	}
-	_, err = re.Inventory.Configure(ctx, configResp)
+	// TODO: document config example?
+	if *execConfigFile != "" {
+		c, err := readConfigResp(*execConfigFile)
+		if err != nil {
+			logger.Fatal(err)
+		}
+		configResp = c
+	}
+	err = re.Inventory.Configure(ctx, configResp)
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -379,6 +411,11 @@ func main() {
 <p><b>whitelisted-users:</b> {{.WhitelistedUsers}}</p>
 <p><b>service-account-json:</b> <a href="file://{{.ServiceAccountJSON}}">{{.ServiceAccountJSON}}</a></p>
 <p><b>platform-container-image:</b> {{.PlatformContainerImage}}</p>
+<p><b>redis:</b> {{.RedisAddr}}</p>
+<p><b>file-cache-bucket:</b> {{.FileCacheBucket}}</p>
+
+<p><b>config:</b>
+<pre>{{.Config}}</pre>
 
 <hr>
 <p>
@@ -396,6 +433,9 @@ func main() {
 			WhitelistedUsers       []string
 			ServiceAccountJSON     string
 			PlatformContainerImage string
+			RedisAddr              string
+			FileCacheBucket        string
+			Config                 *cmdpb.ConfigResp
 		}{
 			Port:                   *port,
 			RemoteexecAddr:         *remoteexecAddr,
@@ -403,6 +443,9 @@ func main() {
 			WhitelistedUsers:       whitelisted,
 			ServiceAccountJSON:     *serviceAccountJSON,
 			PlatformContainerImage: *platformContainerImage,
+			RedisAddr:              redisAddr,
+			FileCacheBucket:        *fileCacheBucket,
+			Config:                 configResp,
 		})
 		if err != nil {
 			logger := log.FromContext(ctx)

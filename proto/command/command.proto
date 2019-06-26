@@ -165,6 +165,9 @@ message RemoteexecPlatform {
 
   // Basename of RBE instance to use. e.g. "default_instance" or "windows".
   string rbe_instance_basename = 2;
+
+  // Set true if nsjail is available in the platform image.
+  bool has_nsjail = 3;
 }
 
 // Config is a command config; mapping from selector.
@@ -246,9 +249,12 @@ message RuntimeConfig {
 }
 
 // PlatformRuntimeConfig is a config to use the runtime.
-// NEXT ID TO USE: 2
+// NEXT ID TO USE: 3
 message PlatformRuntimeConfig {
   repeated string dimensions = 1;
+
+  // Set true if nsjail is available in the platform image.
+  bool has_nsjail = 2;
 }
 
 // ConfigMap is a config map; data source of Config.

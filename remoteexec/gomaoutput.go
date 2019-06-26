@@ -180,6 +180,7 @@ func (g gomaOutput) toFileBlob(ctx context.Context, output *rpb.OutputFile) (*go
 			return err
 		})
 		if err != nil {
+			logger.Warnf("store blob failed offset=%d for %v: %v", offset, output, err)
 			return nil, err
 		}
 		for _, hashKey := range resp.HashKey {

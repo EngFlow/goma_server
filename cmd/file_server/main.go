@@ -13,8 +13,11 @@ import (
 	"flag"
 
 	"cloud.google.com/go/storage"
+	k8sapi "golang.org/x/build/kubernetes/api"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"go.chromium.org/goma/server/cache"
 	"go.chromium.org/goma/server/cache/gcs"
@@ -37,6 +40,23 @@ var (
 	traceProjectID     = flag.String("trace-project-id", "", "project id for cloud tracing")
 	serviceAccountFile = flag.String("service-account-file", "", "service account json file")
 )
+
+type admissionController struct {
+	limit int64
+}
+
+func (a admissionController) AdmitPut(in *cachepb.PutReq) error {
+	if a.limit <= 0 {
+		return nil
+	}
+	rss := server.ResidentMemorySize()
+	s := int64(len(in.Kv.Key) + len(in.Kv.Value))
+	if rss+s <= a.limit {
+		return nil
+	}
+	// TODO: with retryinfo?
+	return status.Errorf(codes.ResourceExhausted, "memory size %d + req:%d > limit %d", rss, s, a.limit)
+}
 
 func main() {
 	flag.Parse()
@@ -90,6 +110,19 @@ func main() {
 		}
 		defer gsclient.Close()
 		c := gcs.New(gsclient.Bucket(*bucket))
+		limit, err := server.MemoryLimit()
+		if err != nil {
+			logger.Errorf("unknown memory limit: %v", err)
+		} else {
+			margin := int64(2 * file.DefaultMaxMsgSize)
+			a := admissionController{
+				limit: limit - margin,
+			}
+			c.AdmissionController = a
+			limitq := k8sapi.NewQuantity(limit, k8sapi.BinarySI)
+			marginq := k8sapi.NewQuantity(margin, k8sapi.BinarySI)
+			logger.Infof("memory check threshold: limit:%s - mergin:%s = %d", limitq, marginq, a.limit)
+		}
 		cclient = cache.LocalClient{CacheServiceServer: c}
 
 	default:

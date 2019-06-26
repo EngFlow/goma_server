@@ -15,17 +15,11 @@ import (
 )
 
 var (
-	requestID = mustTagNewKey("go.chromium.org/goma/server/rpc.request_id")
+	requestID = tag.MustNewKey("go.chromium.org/goma/server/rpc.request_id")
 )
 
-func mustTagNewKey(name string) tag.Key {
-	k, err := tag.NewKey(name)
-	if err != nil {
-		logger := log.FromContext(context.Background())
-		logger.Fatal(err)
-	}
-	log.RegisterTagKey(k)
-	return k
+func init() {
+	log.RegisterTagKey(requestID)
 }
 
 // RequestID returns string identifier of this request.

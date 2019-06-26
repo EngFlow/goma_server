@@ -11,6 +11,9 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"go.opencensus.io/trace"
+	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"go.chromium.org/goma/server/hash"
 	"go.chromium.org/goma/server/log"
@@ -46,24 +49,30 @@ func (s *Service) StoreFile(ctx context.Context, req *gomapb.StoreFileReq) (*gom
 		HashKey: make([]string, len(req.GetBlob())),
 	}
 
-	var wg sync.WaitGroup
+	// if it contains one blob only, report error for blob as rpc error.
+	single := len(req.GetBlob()) == 1
+
+	errg, ctx := errgroup.WithContext(ctx)
 
 	for i, blob := range req.GetBlob() {
-		wg.Add(1)
+		i, blob := i, blob
 		// TODO: limit goroutine if cache server is overloaded or many request consume many memory.
-		go func(i int, blob *gomapb.FileBlob) {
-			defer wg.Done()
+		errg.Go(func() error {
 			if !IsValid(blob) {
 				span.Annotatef(nil, "%d: invalid blob", i)
 				logger.Errorf("%d: invalid blob", i)
-				return
+				if single {
+					return status.Error(codes.InvalidArgument, "not valid blob")
+				}
+				return nil
 			}
 			t := time.Now()
 			b, err := proto.Marshal(blob)
 			if err != nil {
+				// blob has been marshalled, so it should never fail.
 				span.Annotatef(nil, "%d: proto.Marshal %v", i, err)
 				logger.Errorf("%d: proto.Marshal: %v", i, err)
-				return
+				return nil
 			}
 			marshalTime := time.Since(t)
 			t = time.Now()
@@ -80,14 +89,25 @@ func (s *Service) StoreFile(ctx context.Context, req *gomapb.StoreFileReq) (*gom
 			span.Annotatef(nil, "%d hashKey=%s: %v", i, hashKey, err)
 			if err != nil {
 				logger.Errorf("%d: cache.Put %s: %v", i, hashKey, err)
-				return
+				if single || status.Code(err) == codes.ResourceExhausted {
+					// when resource exhausted, fail whole request, not fail of individual blob.
+					return err
+				}
+				// TODO: report individual error.
+				// client will get empty HashKey for failed blobs.
+				return nil
 			}
 			resp.HashKey[i] = hashKey
 			logger.Infof("%d: cache.Put %s: marshal:%s hash:%s put:%s", i, hashKey, marshalTime, hashTime, putTime)
-		}(i, blob)
+			return nil
+		})
 	}
 	logger.Debugf("waiting store %d blobs", len(req.GetBlob()))
-	wg.Wait()
+	err := errg.Wait()
+	if err != nil {
+		logger.Warnf("store %d blobs %s: %v", len(req.GetBlob()), time.Since(start), err)
+		return nil, err
+	}
 	logger.Debugf("store %d blobs %s", len(req.GetBlob()), time.Since(start))
 	return resp, nil
 }

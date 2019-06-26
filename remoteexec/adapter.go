@@ -17,7 +17,6 @@ import (
 	"time"
 
 	rpb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
-	"go.chromium.org/goma/server/server"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
@@ -33,6 +32,7 @@ import (
 	fpb "go.chromium.org/goma/server/proto/file"
 	"go.chromium.org/goma/server/remoteexec/cas"
 	"go.chromium.org/goma/server/remoteexec/digest"
+	"go.chromium.org/goma/server/server"
 )
 
 // DigetCache caches digest for goma file hash.
@@ -51,7 +51,8 @@ type Adapter struct {
 	ExecTimeout time.Duration
 
 	// Client is remoteexec API client.
-	Client Client
+	Client         Client
+	InsecureClient bool
 
 	// GomaFile handles output files from remoteexec's cas to goma's FileBlob.
 	GomaFile fpb.FileServiceClient
@@ -141,6 +142,10 @@ func requesterInfo(ctx context.Context) *gomapb.RequesterInfo {
 }
 
 func (f *Adapter) client(ctx context.Context) Client {
+	// grpc rejects call on insecure connection if credential is set.
+	if f.InsecureClient {
+		return f.Client
+	}
 	user, _ := enduser.FromContext(ctx)
 	client := f.Client
 	token := user.Token()
@@ -149,6 +154,13 @@ func (f *Adapter) client(ctx context.Context) Client {
 	}
 	client.CallOptions = append(client.CallOptions,
 		grpc.PerRPCCredentials(oauth.NewOauthAccess(token)))
+
+	maxBytes := int64(cas.DefaultBatchLimit)
+	if s := f.capabilities.GetCacheCapabilities().GetMaxBatchTotalSizeBytes(); s > maxBytes {
+		maxBytes = s
+	}
+	// TODO: set MaxCallRecvMsgSize if it uses BatchReadBlobs
+	client.CallOptions = append(client.CallOptions, grpc.MaxCallSendMsgSize(int(maxBytes)))
 	return client
 }
 
@@ -246,20 +258,6 @@ func (f *Adapter) Exec(ctx context.Context, req *gomapb.ExecReq) (resp *gomapb.E
 	f.ensureCapabilities(ctx)
 
 	r := f.newRequest(ctx, req)
-	t := time.Now()
-
-	resp = r.getInventoryData(ctx)
-	if resp != nil {
-		logger.Infof("fail fast in inventory lookup: %s", time.Since(t))
-		return resp, nil
-	}
-
-	resp = r.newInputTree(ctx)
-	if resp != nil {
-		logger.Infof("fail fast in input tree: %s", time.Since(t))
-		return resp, nil
-	}
-	r.setupNewAction(ctx)
 
 	// Use this to collect all timestamps and then print on one line, regardless of where
 	// this function returns.
@@ -268,25 +266,45 @@ func (f *Adapter) Exec(ctx context.Context, req *gomapb.ExecReq) (resp *gomapb.E
 		logger.Infof("%s", strings.Join(timestamps, ", "))
 	}()
 	addTimestamp := func(desc string, duration time.Duration) {
-		timestamps = append(timestamps, fmt.Sprintf("%s: %s", desc, duration))
+		timestamps = append(timestamps, fmt.Sprintf("%s: %s", desc, duration.Truncate(time.Millisecond)))
 	}
 
+	t := time.Now()
+	resp = r.getInventoryData(ctx)
+	addTimestamp("inventory", time.Since(t))
+	if resp != nil {
+		logger.Infof("fail fast in inventory lookup: %s", time.Since(t))
+		return resp, nil
+	}
+
+	t = time.Now()
+	resp = r.newInputTree(ctx)
+	addTimestamp("input tree", time.Since(t))
+	if resp != nil {
+		logger.Infof("fail fast in input tree: %s", time.Since(t))
+		return resp, nil
+	}
+
+	t = time.Now()
+	r.setupNewAction(ctx)
 	addTimestamp("setup", time.Since(t))
 
 	eresp := &rpb.ExecuteResponse{}
 	var cached bool
+	t = time.Now()
 	eresp.Result, cached = r.checkCache(ctx)
+	addTimestamp("check cache", time.Since(t))
 	if !cached {
 		t = time.Now()
 		blobs := r.missingBlobs(ctx)
 		addTimestamp("check missing", time.Since(t))
 		t = time.Now()
 		resp := r.uploadBlobs(ctx, blobs)
+		addTimestamp("upload blobs", time.Since(t))
 		if resp != nil {
-			addTimestamp("fail fast for missing input", time.Since(t))
+			logger.Infof("fail fast for uploading missing blobs: %v", resp)
 			return resp, nil
 		}
-		addTimestamp("upload blobs", time.Since(t))
 
 		t = time.Now()
 		var err error

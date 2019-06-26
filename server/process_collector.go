@@ -69,6 +69,8 @@ var (
 	lastResidentMemorySize int64 // atomic.
 
 	samplingInterval = time.Second
+
+	gcSema = make(chan bool, 1)
 )
 
 // ResidentMemorySize reports latest measured resident memory size in bytes.
@@ -81,7 +83,13 @@ func GC(ctx context.Context) int64 {
 	logger := log.FromContext(ctx)
 	rss := ResidentMemorySize()
 	logger.Infof("GC start: rss=%d", rss)
-	runtime.GC()
+	select {
+	case gcSema <- true:
+		runtime.GC()
+		<-gcSema
+	default:
+		logger.Infof("GC already running")
+	}
 	procStats(ctx)
 	rss = ResidentMemorySize()
 	logger.Infof("GC end: rss=%d", rss)

@@ -433,6 +433,7 @@ func (c *ConfigLoader) Load(ctx context.Context, uri string, rc *cmdpb.RuntimeCo
 		return nil, err
 	}
 	mergePlatformProperties(platform, rc.Platform)
+	platform.HasNsjail = rc.GetPlatformRuntimeConfig().GetHasNsjail()
 
 	confs, err := loadConfigs(ctx, c.StorageClient, uri, rc, platform)
 	if err != nil {

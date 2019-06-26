@@ -143,7 +143,7 @@ func defaultCapabilities() *rpb.ServerCapabilities {
 	// high_api_version:<major:2 >
 	return &rpb.ServerCapabilities{
 		CacheCapabilities: &rpb.CacheCapabilities{
-			DigestFunction: []rpb.DigestFunction{
+			DigestFunction: []rpb.DigestFunction_Value{
 				rpb.DigestFunction_SHA256,
 			},
 			ActionCacheUpdateCapabilities: &rpb.ActionCacheUpdateCapabilities{
@@ -151,7 +151,7 @@ func defaultCapabilities() *rpb.ServerCapabilities {
 			},
 			// CachePriorityCapabilities:
 			MaxBatchTotalSizeBytes:      4 * 1024 * 1024,
-			SymlinkAbsolutePathStrategy: rpb.CacheCapabilities_DISALLOWED,
+			SymlinkAbsolutePathStrategy: rpb.SymlinkAbsolutePathStrategy_DISALLOWED,
 		},
 		ExecutionCapabilities: &rpb.ExecutionCapabilities{
 			DigestFunction: rpb.DigestFunction_SHA256,

@@ -37,3 +37,5 @@ package proto
 //go:generate protoc -I. --go_out=plugins=grpc:. backend/backend.proto
 
 //go:generate protoc -I. --go_out=plugins=grpc:. settings/settings.proto settings/settings_service.proto
+
+//go:generate protoc -I. --go_out=plugins=grpc:. nsjail/config.proto

@@ -196,8 +196,8 @@ func (r *request) getInventoryData(ctx context.Context) *gomapb.ExecResp {
 	for _, prop := range cmdConfig.GetRemoteexecPlatform().GetProperties() {
 		r.addPlatformProperty(ctx, prop.Name, prop.Value)
 	}
-	// TODO: set allow chroot if RemoteexecPlatform allows.
-	logger.Infof("platform: %s", r.platform)
+	r.allowChroot = cmdConfig.GetRemoteexecPlatform().GetHasNsjail()
+	logger.Infof("platform: %s, allowChroot=%t", r.platform, r.allowChroot)
 	return nil
 }
 
@@ -350,8 +350,6 @@ func (r *request) newInputTree(ctx context.Context) *gomapb.ExecResp {
 				})
 				return
 			}
-			logger.Debugf("input %s hash=%s digest=%s", input.GetFilename(), input.GetHashKey(), data.Digest())
-
 			file := merkletree.Entry{
 				Name: fname,
 				Data: inputDigestData{
@@ -438,8 +436,7 @@ func (r *request) newInputTree(ctx context.Context) *gomapb.ExecResp {
 		return nil
 	}
 
-	symAbsOk := r.f.capabilities.GetCacheCapabilities().GetSymlinkAbsolutePathStrategy() ==
-		rpb.CacheCapabilities_ALLOWED
+	symAbsOk := r.f.capabilities.GetCacheCapabilities().GetSymlinkAbsolutePathStrategy() == rpb.SymlinkAbsolutePathStrategy_ALLOWED
 
 	for _, f := range r.cmdFiles {
 		if _, found := toolchainInputs[f.Path]; found {
@@ -601,60 +598,6 @@ if [[ "$WORK_DIR" != "" ]]; then
 fi
 exec "$@"
 `
-
-	chrootRunWrapperScript = `#!/bin/bash
-set -e
-
-if [[ "$WORK_DIR" == "" ]]; then
-  echo "ERROR: WORK_DIR is not set" >&2
-  exit 1
-fi
-
-rundir="$(pwd)"
-chroot_workdir="/tmp/goma_chroot"
-
-#
-# mount directories under $chroot_workdir and execute.
-#
-run_dirs=($(ls -1 "$rundir"))
-sys_dirs=(dev proc)
-
-# RBE server generates __action_home__XXXXXXXXXX directory in $rundir
-# (note: XXXXXXXXXX is a random).  Let's skip it because we do not use that.
-# mount directories in the request.
-for d in "${run_dirs[@]}"; do
-  if [[ "$d" == __action_home__* ]]; then
-    continue
-  fi
-  mkdir -p "$chroot_workdir/$d"
-  mount --bind "$rundir/$d" "$chroot_workdir/$d"
-done
-
-# mount directories not included in the request.
-for d in "${sys_dirs[@]}"; do
-  # avoid to mount system directories if that exist in the user's request.
-  if [[ -d "$rundir/$d" ]]; then
-    continue
-  fi
-  # workaround to make them read only mount with util-linux < 2.27.
-  mkdir -p "$chroot_workdir/$d"
-  mount --bind "/$d" "$chroot_workdir/$d"
-  mount "$chroot_workdir/$d" -o remount,ro,bind
-done
-
-# currently running with root. run the command with nobody:nogroup with chroot.
-# We use nsjail to chdir without running bash script inside chroot, and
-# libc inside chroot can be different from libc outside.
-# TODO: give nsjail rule with file.
-nsjail \
-  --user nobody:nobody \
-  --group nogroup:nogroup \
-  --chroot "$chroot_workdir" \
-  --cwd "$WORK_DIR" \
-  --rw \
-  --quiet \
-  -- "$@"
-`
 )
 
 // TODO: put wrapper script in platform container?
@@ -672,22 +615,22 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 	envs := []string{fmt.Sprintf("WORK_DIR=%s", wd)}
 
 	// The developer of this program can make multiple wrapper scripts
-	// to be used by adding wrapperDesc instances to `wrappers`.
+	// to be used by adding fileDesc instances to `files`.
 	// However, only the first one is called in the command line.
-	// The other scripts should be called from the first wrapper script.
-	type wrapperDesc struct {
-		name string
-		data digest.Data
+	// The other scripts should be called from the first wrapper script
+	// if needed.
+	type fileDesc struct {
+		name         string
+		data         digest.Data
+		isExecutable bool
 	}
-	var wrappers []wrapperDesc
+	var files []fileDesc
 
 	args := buildArgs(ctx, cmdConfig, argv0, r.gomaReq)
 
 	pathType := cmdConfig.GetCmdDescriptor().GetSetup().GetPathType()
 	switch pathType {
 	case cmdpb.CmdDescriptor_POSIX:
-		var d digest.Data
-		// TODO: use chroot for all ATS cases.
 		if r.needChroot {
 			logger.Infof("run with chroot")
 			envs = append(envs, r.gomaReq.Env...)
@@ -695,8 +638,20 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 			r.addPlatformProperty(ctx, "dockerPrivileged", "true")
 			// needed for chroot command and mount command.
 			r.addPlatformProperty(ctx, "dockerRunAsRoot", "true")
-			d = digest.Bytes("chroot-run-wrapper-script", []byte(chrootRunWrapperScript))
+			nsjailCfg := nsjailConfig(cwd)
+			files = []fileDesc{
+				{
+					name:         "run.sh",
+					data:         digest.Bytes("nsjail-run-wrapper-script", []byte(nsjailRunWrapperScript)),
+					isExecutable: true,
+				},
+				{
+					name: "nsjail.cfg",
+					data: digest.Bytes("nsjail-config-file", []byte(nsjailCfg)),
+				},
+			}
 		} else {
+			var d digest.Data
 			err = cwdAgnosticReq(ctx, cmdConfig, r.filepath, r.gomaReq.Arg, r.gomaReq.Env)
 			if err != nil {
 				logger.Infof("non cwd agnostic: %v", err)
@@ -717,23 +672,24 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 					envs = append(envs, e)
 				}
 			}
+			files = []fileDesc{
+				{
+					name:         "run.sh",
+					data:         d,
+					isExecutable: true,
+				},
+			}
 		}
-		wrappers = []wrapperDesc{
-			{
-				name: "run.sh",
-				data: d,
-			},
-		}
-
 	case cmdpb.CmdDescriptor_WINDOWS:
 		wn, data, err := wrapperForWindows(ctx)
 		if err != nil {
 			return err
 		}
-		wrappers = []wrapperDesc{
+		files = []fileDesc{
 			{
-				name: wn,
-				data: data,
+				name:         wn,
+				data:         data,
+				isExecutable: true,
 			},
 		}
 
@@ -744,17 +700,17 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 	// Only the first one is called in the command line via storing
 	// `wrapperPath` in `r.args` later.
 	wrapperPath := ""
-	for i, w := range wrappers {
+	for i, w := range files {
 		wp, err := rootRel(r.filepath, w.name, r.gomaReq.GetCwd(), r.tree.RootDir())
 		if err != nil {
 			return err
 		}
 
-		logger.Infof("wrapper (%d) %s => %v", i, wp, w.data.Digest())
+		logger.Infof("file (%d) %s => %v", i, wp, w.data.Digest())
 		r.tree.Set(merkletree.Entry{
 			Name:         wp,
 			Data:         w.data,
-			IsExecutable: true,
+			IsExecutable: w.isExecutable,
 		})
 		if wrapperPath == "" {
 			wrapperPath = wp

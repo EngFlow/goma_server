@@ -96,11 +96,11 @@ func fetch(ctx context.Context, token *oauth2.Token) (*TokenInfo, error) {
 		defer resp.Body.Close()
 		data, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
-			return status.Errorf(codes.Internal, "read tokeninfo response: %v", err)
+			return status.Errorf(codes.Internal, "read tokeninfo response: code=%d %v", resp.StatusCode, err)
 		}
 		tokenInfo, err = parseResp(data)
 		if err != nil {
-			return status.Errorf(codes.Internal, "parse tokeninfo response: %v", err)
+			return status.Errorf(codes.Internal, "parse tokeninfo response: code=%d %v", resp.StatusCode, err)
 		}
 		return nil
 	})
@@ -112,6 +112,7 @@ func parseResp(data []byte) (*TokenInfo, error) {
 		Email            string `json:"email"`
 		Audience         string `json:"aud"`
 		ExpiresAt        string `json:"exp"`
+		Error            string `json:"error"`
 		ErrorDescription string `json:"error_description"`
 	}
 	d := json.NewDecoder(bytes.NewReader(data))
@@ -119,17 +120,18 @@ func parseResp(data []byte) (*TokenInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	if js.Email == "" && js.ExpiresAt == "" && js.ErrorDescription == "" {
+	if js.Email == "" && js.ExpiresAt == "" && js.Error == "" && js.ErrorDescription == "" {
 		return nil, status.Errorf(codes.Internal, "unexpected token info: %v", js)
 	}
 	ti := &TokenInfo{
 		Email:    js.Email,
 		Audience: js.Audience,
 	}
-	if js.ErrorDescription != "" {
-		ti.Err = status.Error(codes.PermissionDenied, js.ErrorDescription)
+	if js.Error != "" || js.ErrorDescription != "" {
+		ti.Err = status.Errorf(codes.PermissionDenied, "%s: %q", js.Error, js.ErrorDescription)
 	} else {
-		// when error_description exists, maybe no exp.
+		// parse exp iff no error is set.
+		// when error exists, maybe no exp.
 		ts, err := strconv.ParseInt(js.ExpiresAt, 10, 64)
 		if err != nil {
 			ti.Err = status.Errorf(codes.Internal, "parse exp: %v", err)

@@ -71,7 +71,7 @@ var (
 var (
 	configUpdate = stats.Int64("go.chromium.org/goma/server/cmd/exec_server.toolchain-config-updates", "toolchain-config updates", stats.UnitDimensionless)
 
-	configStatusKey = mustTagNewKey("status")
+	configStatusKey = tag.MustNewKey("status")
 
 	configViews = []*view.View{
 		{
@@ -84,15 +84,6 @@ var (
 		},
 	}
 )
-
-func mustTagNewKey(name string) tag.Key {
-	k, err := tag.NewKey(name)
-	if err != nil {
-		logger := log.FromContext(context.Background())
-		logger.Fatal(err)
-	}
-	return k
-}
 
 func recordConfigUpdate(ctx context.Context, err error) {
 	logger := log.FromContext(ctx)
@@ -139,12 +130,9 @@ func configureByLoader(ctx context.Context, loader *command.ConfigMapLoader, inv
 	if err != nil {
 		return "", err
 	}
-	n, err := inventory.Configure(ctx, resp)
+	err = inventory.Configure(ctx, resp)
 	if err != nil {
 		return "", err
-	}
-	if n == 0 {
-		return "", fmt.Errorf("no available config in %s (%d)", resp.VersionId, len(resp.Configs))
 	}
 	return resp.VersionId, nil
 }
@@ -399,12 +387,12 @@ func main() {
 				return
 			}
 			resp := configMapToConfigResp(ctx, cm)
-			n, err := inventory.Configure(ctx, resp)
+			err = inventory.Configure(ctx, resp)
 			if err != nil {
 				ready <- err
 				return
 			}
-			logger.Infof("configure %d %s", n, resp.VersionId)
+			logger.Infof("configure %s", resp.VersionId)
 			ready <- nil
 		}()
 		confServer = nullServer{ch: make(chan error)}

@@ -17,15 +17,25 @@ import (
 	"time"
 
 	"cloud.google.com/go/storage"
+	"google.golang.org/api/googleapi"
 
 	"go.chromium.org/goma/server/log"
 	pb "go.chromium.org/goma/server/proto/cache"
 )
 
+// AdmissionController checks incoming request.
+type AdmissionController interface {
+	AdmitPut(*pb.PutReq) error
+}
+
+type nullAdmissionController struct{}
+
+func (nullAdmissionController) AdmitPut(*pb.PutReq) error { return nil }
+
 // Cache represents key-value cache using google cloud storage.
 type Cache struct {
-	bkt *storage.BucketHandle
-
+	bkt                 *storage.BucketHandle
+	AdmissionController AdmissionController
 	// should be accessed via stomic pkg.
 	nhit, nget int64
 }
@@ -33,7 +43,8 @@ type Cache struct {
 // New creates new cache.
 func New(bkt *storage.BucketHandle) *Cache {
 	return &Cache{
-		bkt: bkt,
+		bkt:                 bkt,
+		AdmissionController: nullAdmissionController{},
 	}
 }
 
@@ -69,9 +80,12 @@ func checkAttrs(attr *storage.ObjectAttrs, value []byte) error {
 
 func (c *Cache) Put(ctx context.Context, in *pb.PutReq) (*pb.PutResp, error) {
 	logger := log.FromContext(ctx)
+	if err := c.AdmissionController.AdmitPut(in); err != nil {
+		logger.Warnf("admission error: %v", err)
+		return nil, err
+	}
 	key := in.Kv.Key
 	value := in.Kv.Value
-
 	t := time.Now()
 
 	obj := c.bkt.Object(key)
@@ -93,6 +107,10 @@ func (c *Cache) Put(ctx context.Context, in *pb.PutReq) (*pb.PutResp, error) {
 	w := obj.NewWriter(ctx)
 	w.CRC32C = crc32.Checksum(value, crc32cTable)
 	w.SendCRC32C = true
+	w.ChunkSize = len(value)
+	if w.ChunkSize > googleapi.DefaultUploadChunkSize {
+		w.ChunkSize = googleapi.DefaultUploadChunkSize
+	}
 
 	if _, err := w.Write(value); err != nil {
 		w.CloseWithError(err)
