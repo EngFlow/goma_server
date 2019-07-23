@@ -54,6 +54,7 @@ import (
 	filepb "go.chromium.org/goma/server/proto/file"
 	"go.chromium.org/goma/server/remoteexec"
 	"go.chromium.org/goma/server/remoteexec/digest"
+	"go.chromium.org/goma/server/rpc"
 	"go.chromium.org/goma/server/server"
 )
 
@@ -153,6 +154,35 @@ func (a defaultACL) Load(ctx context.Context) (*authpb.ACL, error) {
 			},
 		},
 	}, nil
+}
+
+type reExecServer struct {
+	re *remoteexec.Adapter
+}
+
+func (r reExecServer) Exec(ctx context.Context, req *gomapb.ExecReq) (*gomapb.ExecResp, error) {
+	ctx, id := rpc.TagID(ctx, req.GetRequesterInfo())
+	logger := log.FromContext(ctx)
+	logger.Infof("call exec %s", id)
+	return r.re.Exec(ctx, req)
+}
+
+type reFileServer struct {
+	s filepb.FileServiceServer
+}
+
+func (r reFileServer) StoreFile(ctx context.Context, req *gomapb.StoreFileReq) (*gomapb.StoreFileResp, error) {
+	ctx, id := rpc.TagID(ctx, req.GetRequesterInfo())
+	logger := log.FromContext(ctx)
+	logger.Infof("call storefile %s", id)
+	return r.s.StoreFile(ctx, req)
+}
+
+func (r reFileServer) LookupFile(ctx context.Context, req *gomapb.LookupFileReq) (*gomapb.LookupFileResp, error) {
+	ctx, id := rpc.TagID(ctx, req.GetRequesterInfo())
+	logger := log.FromContext(ctx)
+	logger.Infof("call lookupfile %s", id)
+	return r.s.LookupFile(ctx, req)
 }
 
 type localBackend struct {
@@ -387,8 +417,8 @@ func main() {
 	mux := http.DefaultServeMux
 	frontend.Register(mux, frontend.Frontend{
 		Backend: localBackend{
-			ExecService: re,
-			FileService: fileServiceClient.Service,
+			ExecService: reExecServer{re},
+			FileService: reFileServer{fileServiceClient.Service},
 			Auth: &auth.Auth{
 				Client: authClient{Service: authService},
 			},

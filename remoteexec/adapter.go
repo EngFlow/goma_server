@@ -110,9 +110,10 @@ func (f *Adapter) withRequestMetadata(ctx context.Context, reqInfo *gomapb.Reque
 	if err != nil {
 		return nil, err
 	}
+	// https://github.com/bazelbuild/remote-apis/blob/a5c577357528b33a4adff88c0c7911dd086c6923/build/bazel/remote/execution/v2/remote_execution.proto#L1460
 	// https://github.com/grpc/grpc-go/blob/master/Documentation/grpc-metadata.md#storing-binary-data-in-metadata
 	return metadata.AppendToOutgoingContext(ctx,
-		"google.devtools.remoteexecution.v1test.requestmetadata-bin",
+		"build.bazel.remote.execution.v2.requestmetadata-bin",
 		string(b)), nil
 }
 

@@ -936,7 +936,7 @@ func TestAdaptorHandleArbitraryToolchainSupport(t *testing.T) {
 
 	// files and executables might contain extra "out/Release/run.sh".
 	wantFiles := []string{"out/Release/run.sh", "bin/clang", "include/hello.h", "src/hello.c"}
-	wantExecutables := []string{"bin/clang"}
+	wantExecutables := []string{"bin/clang", "out/Release/run.sh"}
 
 	for _, f := range wantFiles {
 		if !files[f].isFile {
@@ -1049,10 +1049,6 @@ func TestAdaptorHandleArbitraryToolchainSupportNonCwdAgnostic(t *testing.T) {
 			Value: "/b/c/w",
 		},
 		{
-			Name:  "PWD",
-			Value: "/b/c/w/out/Debug",
-		},
-		{
 			Name:  "WORK_DIR",
 			Value: "out/Debug",
 		},
@@ -1071,8 +1067,8 @@ func TestAdaptorHandleArbitraryToolchainSupportNonCwdAgnostic(t *testing.T) {
 	}
 
 	// files and executables might contain extra "out/Release/run.sh".
-	wantFiles := []string{"out/Debug/run.sh", "bin/clang", "include/hello.h", "src/hello.c"}
-	wantExecutables := []string{"bin/clang"}
+	wantFiles := []string{"out/Debug/run.sh", "out/Debug/env_file_for_docker", "bin/clang", "include/hello.h", "src/hello.c"}
+	wantExecutables := []string{"bin/clang", "out/Debug/run.sh"}
 
 	for _, f := range wantFiles {
 		if !files[f].isFile {
@@ -1087,6 +1083,9 @@ func TestAdaptorHandleArbitraryToolchainSupportNonCwdAgnostic(t *testing.T) {
 
 	if got, want := files["out/Debug/run.sh"].digest, digest.Bytes("wrapper-script", []byte(wrapperScript)).Digest(); !proto.Equal(got, want) {
 		t.Errorf("digest of out/Debug/run.sh: %s != %s", got, want)
+	}
+	if got, want := files["out/Debug/env_file_for_docker"].digest, digest.Bytes("envfile", []byte("PWD=/b/c/w/out/Debug")).Digest(); !proto.Equal(got, want) {
+		t.Errorf("digest of out/Debug/env_file_for_docker: %s != %s", got, want)
 	}
 }
 

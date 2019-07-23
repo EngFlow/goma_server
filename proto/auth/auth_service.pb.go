@@ -8,6 +8,8 @@ import (
 	fmt "fmt"
 	proto "github.com/golang/protobuf/proto"
 	grpc "google.golang.org/grpc"
+	codes "google.golang.org/grpc/codes"
+	status "google.golang.org/grpc/status"
 	math "math"
 )
 
@@ -69,6 +71,14 @@ func (c *authServiceClient) Auth(ctx context.Context, in *AuthReq, opts ...grpc.
 // AuthServiceServer is the server API for AuthService service.
 type AuthServiceServer interface {
 	Auth(context.Context, *AuthReq) (*AuthResp, error)
+}
+
+// UnimplementedAuthServiceServer can be embedded to have forward compatible implementations.
+type UnimplementedAuthServiceServer struct {
+}
+
+func (*UnimplementedAuthServiceServer) Auth(ctx context.Context, req *AuthReq) (*AuthResp, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Auth not implemented")
 }
 
 func RegisterAuthServiceServer(s *grpc.Server, srv AuthServiceServer) {

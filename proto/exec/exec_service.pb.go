@@ -9,6 +9,8 @@ import (
 	proto "github.com/golang/protobuf/proto"
 	api "go.chromium.org/goma/server/proto/api"
 	grpc "google.golang.org/grpc"
+	codes "google.golang.org/grpc/codes"
+	status "google.golang.org/grpc/status"
 	math "math"
 )
 
@@ -142,6 +144,14 @@ func (c *execServiceClient) Exec(ctx context.Context, in *api.ExecReq, opts ...g
 // ExecServiceServer is the server API for ExecService service.
 type ExecServiceServer interface {
 	Exec(context.Context, *api.ExecReq) (*api.ExecResp, error)
+}
+
+// UnimplementedExecServiceServer can be embedded to have forward compatible implementations.
+type UnimplementedExecServiceServer struct {
+}
+
+func (*UnimplementedExecServiceServer) Exec(ctx context.Context, req *api.ExecReq) (*api.ExecResp, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Exec not implemented")
 }
 
 func RegisterExecServiceServer(s *grpc.Server, srv ExecServiceServer) {

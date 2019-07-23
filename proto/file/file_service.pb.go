@@ -9,6 +9,8 @@ import (
 	proto "github.com/golang/protobuf/proto"
 	api "go.chromium.org/goma/server/proto/api"
 	grpc "google.golang.org/grpc"
+	codes "google.golang.org/grpc/codes"
+	status "google.golang.org/grpc/status"
 	math "math"
 )
 
@@ -85,6 +87,17 @@ func (c *fileServiceClient) LookupFile(ctx context.Context, in *api.LookupFileRe
 type FileServiceServer interface {
 	StoreFile(context.Context, *api.StoreFileReq) (*api.StoreFileResp, error)
 	LookupFile(context.Context, *api.LookupFileReq) (*api.LookupFileResp, error)
+}
+
+// UnimplementedFileServiceServer can be embedded to have forward compatible implementations.
+type UnimplementedFileServiceServer struct {
+}
+
+func (*UnimplementedFileServiceServer) StoreFile(ctx context.Context, req *api.StoreFileReq) (*api.StoreFileResp, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method StoreFile not implemented")
+}
+func (*UnimplementedFileServiceServer) LookupFile(ctx context.Context, req *api.LookupFileReq) (*api.LookupFileResp, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method LookupFile not implemented")
 }
 
 func RegisterFileServiceServer(s *grpc.Server, srv FileServiceServer) {

@@ -202,15 +202,12 @@ func (r *request) getInventoryData(ctx context.Context) *gomapb.ExecResp {
 }
 
 func (r *request) addPlatformProperty(ctx context.Context, name, value string) {
-	logger := log.FromContext(ctx)
 	for _, p := range r.platform.Properties {
 		if p.Name == name {
-			logger.Infof("platform property update %s: %s->%s", name, p.Value, value)
 			p.Value = value
 			return
 		}
 	}
-	logger.Infof("platform property add %s: %s", name, value)
 	r.platform.Properties = append(r.platform.Properties, &rpb.Platform_Property{
 		Name:  name,
 		Value: value,
@@ -579,13 +576,13 @@ if [[ "$rundir" = "" ]]; then
   exit 1
 fi
 
-# PWD might be /proc/self/cwd, but we need actual path for
-# INPUT_ROOT_DIR and WORK_DIR, so we can't use PWD for --workdir.
+# TODO: use PWD instead of INPUT_ROOT_DIR if appricable.
 
 docker run \
  -u "$(id -u)" \
  --volume "${rundir}:${INPUT_ROOT_DIR}" \
  --workdir "${INPUT_ROOT_DIR}/${WORK_DIR}" \
+ --env-file "${WORK_DIR}/env_file_for_docker" \
  --rm \
  "$image" \
  "$@"
@@ -627,21 +624,22 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 	var files []fileDesc
 
 	args := buildArgs(ctx, cmdConfig, argv0, r.gomaReq)
+	// TODO: only allow whitelisted envs.
 
 	pathType := cmdConfig.GetCmdDescriptor().GetSetup().GetPathType()
+	const posixWrapperName = "run.sh"
 	switch pathType {
 	case cmdpb.CmdDescriptor_POSIX:
 		if r.needChroot {
 			logger.Infof("run with chroot")
-			envs = append(envs, r.gomaReq.Env...)
 			// needed for bind mount.
 			r.addPlatformProperty(ctx, "dockerPrivileged", "true")
 			// needed for chroot command and mount command.
 			r.addPlatformProperty(ctx, "dockerRunAsRoot", "true")
-			nsjailCfg := nsjailConfig(cwd)
+			nsjailCfg := nsjailConfig(cwd, r.filepath, r.gomaReq.GetToolchainSpecs(), r.gomaReq.Env)
 			files = []fileDesc{
 				{
-					name:         "run.sh",
+					name:         posixWrapperName,
 					data:         digest.Bytes("nsjail-run-wrapper-script", []byte(nsjailRunWrapperScript)),
 					isExecutable: true,
 				},
@@ -651,17 +649,25 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 				},
 			}
 		} else {
-			var d digest.Data
 			err = cwdAgnosticReq(ctx, cmdConfig, r.filepath, r.gomaReq.Arg, r.gomaReq.Env)
 			if err != nil {
 				logger.Infof("non cwd agnostic: %v", err)
-				d = digest.Bytes("wrapper-script", []byte(wrapperScript))
 				envs = append(envs, fmt.Sprintf("INPUT_ROOT_DIR=%s", r.tree.RootDir()))
-				envs = append(envs, r.gomaReq.Env...)
+
 				r.addPlatformProperty(ctx, "dockerSiblingContainers", "true")
+				files = []fileDesc{
+					{
+						name:         posixWrapperName,
+						data:         digest.Bytes("wrapper-script", []byte(wrapperScript)),
+						isExecutable: true,
+					},
+					{
+						name: "env_file_for_docker",
+						data: digest.Bytes("envfile", []byte(strings.Join(r.gomaReq.Env, "\n"))),
+					},
+				}
 			} else {
 				logger.Infof("cwd agnostic")
-				d = digest.Bytes("cwd-agnostic-wrapper-script", []byte(cwdAgnosticWrapperScript))
 				for _, e := range r.gomaReq.Env {
 					if strings.HasPrefix(e, "PWD=") {
 						// PWD is usually absolute path.
@@ -671,13 +677,13 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 					}
 					envs = append(envs, e)
 				}
-			}
-			files = []fileDesc{
-				{
-					name:         "run.sh",
-					data:         d,
-					isExecutable: true,
-				},
+				files = []fileDesc{
+					{
+						name:         posixWrapperName,
+						data:         digest.Bytes("cwd-agnostic-wrapper-script", []byte(cwdAgnosticWrapperScript)),
+						isExecutable: true,
+					},
+				}
 			}
 		}
 	case cmdpb.CmdDescriptor_WINDOWS:
@@ -721,14 +727,9 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 
 	// if a wrapper exists in cwd, `wrapper` does not have a directory name.
 	// It cannot be callable on POSIX because POSIX do not contain "." in
-	// its PATH.  Although "." is included in PATH on Windows, there can be
-	// a risk unexpected scripts with the same name would be called.
-	// Let's avoid the situation with explicitly specifying the directory
-	// name i.e. ".".
-	if r.filepath.Base(wrapperPath) == wrapperPath {
-		// Since Join omit "." and this is only the case Join must not
-		// omit ".", we need to join by ourselves here.
-		wrapperPath = "." + r.filepath.PathSep() + wrapperPath
+	// its PATH.
+	if wrapperPath == posixWrapperName {
+		wrapperPath = "./" + posixWrapperName
 	}
 	r.args = append([]string{wrapperPath}, args...)
 	return nil
@@ -831,7 +832,7 @@ func (r *request) setupNewAction(ctx context.Context) {
 		return
 	}
 	logger := log.FromContext(ctx)
-	logger.Infof("command digest: %v %s", data.Digest(), command)
+	logger.Infof("command digest: %v", data.Digest())
 
 	r.digestStore.Set(data)
 	r.action.CommandDigest = data.Digest()

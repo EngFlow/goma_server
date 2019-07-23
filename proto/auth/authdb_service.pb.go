@@ -8,6 +8,8 @@ import (
 	fmt "fmt"
 	proto "github.com/golang/protobuf/proto"
 	grpc "google.golang.org/grpc"
+	codes "google.golang.org/grpc/codes"
+	status "google.golang.org/grpc/status"
 	math "math"
 )
 
@@ -71,6 +73,14 @@ func (c *authDBServiceClient) CheckMembership(ctx context.Context, in *CheckMemb
 // AuthDBServiceServer is the server API for AuthDBService service.
 type AuthDBServiceServer interface {
 	CheckMembership(context.Context, *CheckMembershipReq) (*CheckMembershipResp, error)
+}
+
+// UnimplementedAuthDBServiceServer can be embedded to have forward compatible implementations.
+type UnimplementedAuthDBServiceServer struct {
+}
+
+func (*UnimplementedAuthDBServiceServer) CheckMembership(ctx context.Context, req *CheckMembershipReq) (*CheckMembershipResp, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CheckMembership not implemented")
 }
 
 func RegisterAuthDBServiceServer(s *grpc.Server, srv AuthDBServiceServer) {

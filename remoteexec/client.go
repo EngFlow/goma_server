@@ -226,35 +226,46 @@ func ExecuteAndWait(ctx context.Context, c Client, req *rpb.ExecuteRequest, opts
 				logger.Errorf("%s", err)
 				return err
 			}
-			return erespErr(resp)
+			return erespErr(ctx, resp)
 		}
 	})
 	recordFinish()
+	if err == nil {
+		err = status.FromProto(resp.GetStatus()).Err()
+	}
 	return opName, resp, err
 }
 
 // erespErr returns codes.Unavailable if it has retriable failure result.
 // returns nil otherwise (to terminates retrying, even if eresp contains
 // error status).
-func erespErr(eresp *rpb.ExecuteResponse) error {
+func erespErr(ctx context.Context, eresp *rpb.ExecuteResponse) error {
+	logger := log.FromContext(ctx)
 	st := eresp.GetStatus()
-	// see bazel remote retrier.
-	// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/remote/RemoteRetrier.java
-	// also see https://cloud.google.com/pubsub/docs/reference/error-codes
+	// https://github.com/bazelbuild/remote-apis/blob/e7282cf0f0e16e7ba84209be5417279e6815bee7/build/bazel/remote/execution/v2/remote_execution.proto#L83
+	// FAILED_PRECONDITION:
+	//   one or more errors occured in setting up the action
+	//   requested, such as a missing input or command or
+	//   no worker being available. The client may be able to
+	//   fix the errors and retry.
+	// UNAVAILABLE:
+	//   Due to transient condition, such as all workers being
+	//   occupied (and the server does not support a queue), the
+	//   action could not be started. The client should retry.
 	//
-	// we don't retry codes.Unauthenticated; end user's access token would
-	// be expired, so retry also get unauthenticated (we don't have
-	// refresh token).
-	//
-	// codes.DeadlineExceeded might fail soon with codes.DeadlineExceeded,
-	// but if server side sets shorter deadline and caller has more time
-	// in context, retry would succeed.
+	// Other error would be non retriable.
 	switch codes.Code(st.GetCode()) {
-	case codes.Unknown, codes.DeadlineExceeded, codes.Aborted, codes.Internal, codes.Unavailable, codes.ResourceExhausted:
+	case codes.OK:
+	case codes.FailedPrecondition:
+		logger.Warnf("execute response: failed precondition: %s", st)
+		fallthrough
+	case codes.Unavailable:
 		st = proto.Clone(st).(*spb.Status)
 		// codes.Unavailable, so that rpc.Retry will retry.
 		st.Code = int32(codes.Unavailable)
 		return status.FromProto(st).Err()
+	default:
+		logger.Errorf("execute response: error %s", st)
 	}
 	return nil
 }

@@ -5,8 +5,12 @@
 package remoteexec
 
 import (
+	"sort"
+	"strings"
+
 	"github.com/golang/protobuf/proto"
 
+	gomapb "go.chromium.org/goma/server/proto/api"
 	nsjailpb "go.chromium.org/goma/server/proto/nsjail"
 )
 
@@ -48,8 +52,9 @@ for d in "${sys_dirs[@]}"; do
   # directory will be mounted by nsjail later.
   mkdir -p "$chroot_workdir/$d"
 done
-# needed to make nsjail bind /dev/urandom.
+# needed to make nsjail bind device files.
 touch "$chroot_workdir/dev/urandom"
+touch "$chroot_workdir/dev/null"
 
 # currently running with root. run the command with nobody:nogroup with chroot.
 # We use nsjail to chdir without running bash script inside chroot, and
@@ -58,10 +63,33 @@ nsjail --quiet --config "$WORK_DIR/nsjail.cfg" -- "$@"
 `
 )
 
+// pathFromToolchainSpec returns ':'-joined directories of paths in toolchain spec.
+// Since symlinks may point to executables, having directories with executables
+// may not work, but it is a bit cumbersome to analyze symlinks.
+// Also, having library directories in PATH should be harmless because
+// the Goma client may not include multiple subprograms with the same name.
+func pathFromToolchainSpec(cfp clientFilePath, ts []*gomapb.ToolchainSpec) string {
+	m := make(map[string]bool)
+	for _, e := range ts {
+		m[cfp.Dir(e.GetPath())] = true
+	}
+	var r []string
+	for k := range m {
+		if k == "" || k == "." {
+			continue
+		}
+		r = append(r, k)
+	}
+	// This function must return the same result for the same input, but go
+	// does not guarantee the iteration order.
+	sort.Strings(r)
+	return strings.Join(r, ":")
+}
+
 // nsjailConfig returns nsjail configuration.
 // When you modify followings, please make sure it matches
 // nsjailRunWrapperScript above.
-func nsjailConfig(cwd string) []byte {
+func nsjailConfig(cwd string, cfp clientFilePath, ts []*gomapb.ToolchainSpec, envs []string) []byte {
 	chrootWorkdir := "/tmp/goma_chroot"
 	cfg := &nsjailpb.NsJailConfig{
 		Uidmap: []*nsjailpb.IdMap{
@@ -85,6 +113,12 @@ func nsjailConfig(cwd string) []byte {
 				IsDir:  proto.Bool(true),
 			},
 			{
+				Src:    proto.String("/dev/null"),
+				Dst:    proto.String("/dev/null"),
+				Rw:     proto.Bool(true),
+				IsBind: proto.Bool(true),
+			},
+			{
 				Src:    proto.String("/dev/urandom"),
 				Dst:    proto.String("/dev/urandom"),
 				IsBind: proto.Bool(true),
@@ -94,15 +128,16 @@ func nsjailConfig(cwd string) []byte {
 		// TODO: use log file and print to server log.
 		LogLevel:  nsjailpb.LogLevel_WARNING.Enum(),
 		MountProc: proto.Bool(true),
-		Envar: []string{
-			// HACK: ChromeOS clang wrapper needs this.
-			// https://chromium.googlesource.com/chromiumos/overlays/chromiumos-overlay/+/f15eab2d792acfe1ee5eca4d95792c081558cf84/sys-devel/gcc/files/sysroot_wrapper.body#69
-			// TODO: set better path upon needs.
-			// e.g. auto generate from where executables and symlink
-			// to executable exists, or choose directories with
-			// executables from PATH sent by clients.
-			"PATH=",
-		},
+		Envar: append(
+			[]string{
+				"PATH=" + pathFromToolchainSpec(cfp, ts),
+				// Dummy home directory is needed by pnacl-clang to
+				// import site.py to import user-defined python
+				// packages.
+				"HOME=/",
+			},
+			// Add client-side environemnt to execution environment.
+			envs...),
 		RlimitAsType:    nsjailpb.RLimit_INF.Enum(),
 		RlimitFsizeType: nsjailpb.RLimit_INF.Enum(),
 		// TODO: relax RLimit from the default.

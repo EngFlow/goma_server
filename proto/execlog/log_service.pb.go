@@ -9,6 +9,8 @@ import (
 	proto "github.com/golang/protobuf/proto"
 	api "go.chromium.org/goma/server/proto/api"
 	grpc "google.golang.org/grpc"
+	codes "google.golang.org/grpc/codes"
+	status "google.golang.org/grpc/status"
 	math "math"
 )
 
@@ -73,6 +75,14 @@ func (c *logServiceClient) SaveLog(ctx context.Context, in *api.SaveLogReq, opts
 // LogServiceServer is the server API for LogService service.
 type LogServiceServer interface {
 	SaveLog(context.Context, *api.SaveLogReq) (*api.SaveLogResp, error)
+}
+
+// UnimplementedLogServiceServer can be embedded to have forward compatible implementations.
+type UnimplementedLogServiceServer struct {
+}
+
+func (*UnimplementedLogServiceServer) SaveLog(ctx context.Context, req *api.SaveLogReq) (*api.SaveLogResp, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveLog not implemented")
 }
 
 func RegisterLogServiceServer(s *grpc.Server, srv LogServiceServer) {

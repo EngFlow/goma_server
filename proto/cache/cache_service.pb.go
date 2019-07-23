@@ -8,6 +8,8 @@ import (
 	fmt "fmt"
 	proto "github.com/golang/protobuf/proto"
 	grpc "google.golang.org/grpc"
+	codes "google.golang.org/grpc/codes"
+	status "google.golang.org/grpc/status"
 	math "math"
 )
 
@@ -81,6 +83,17 @@ func (c *cacheServiceClient) Put(ctx context.Context, in *PutReq, opts ...grpc.C
 type CacheServiceServer interface {
 	Get(context.Context, *GetReq) (*GetResp, error)
 	Put(context.Context, *PutReq) (*PutResp, error)
+}
+
+// UnimplementedCacheServiceServer can be embedded to have forward compatible implementations.
+type UnimplementedCacheServiceServer struct {
+}
+
+func (*UnimplementedCacheServiceServer) Get(ctx context.Context, req *GetReq) (*GetResp, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Get not implemented")
+}
+func (*UnimplementedCacheServiceServer) Put(ctx context.Context, req *PutReq) (*PutResp, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Put not implemented")
 }
 
 func RegisterCacheServiceServer(s *grpc.Server, srv CacheServiceServer) {

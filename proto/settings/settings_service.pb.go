@@ -8,6 +8,8 @@ import (
 	fmt "fmt"
 	proto "github.com/golang/protobuf/proto"
 	grpc "google.golang.org/grpc"
+	codes "google.golang.org/grpc/codes"
+	status "google.golang.org/grpc/status"
 	math "math"
 )
 
@@ -70,6 +72,14 @@ func (c *settingsServiceClient) Get(ctx context.Context, in *SettingsReq, opts .
 // SettingsServiceServer is the server API for SettingsService service.
 type SettingsServiceServer interface {
 	Get(context.Context, *SettingsReq) (*SettingsResp, error)
+}
+
+// UnimplementedSettingsServiceServer can be embedded to have forward compatible implementations.
+type UnimplementedSettingsServiceServer struct {
+}
+
+func (*UnimplementedSettingsServiceServer) Get(ctx context.Context, req *SettingsReq) (*SettingsResp, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Get not implemented")
 }
 
 func RegisterSettingsServiceServer(s *grpc.Server, srv SettingsServiceServer) {
