@@ -186,13 +186,7 @@ func newConfigServer(ctx context.Context, inventory *exec.Inventory, uri string,
 		SubscriberID:   fmt.Sprintf("toolchain-config-%s-%s", server.ClusterName(ctx), server.HostName(ctx)),
 		RemoteexecAddr: *remoteexecAddr,
 	}
-	cs.w, err = cs.configmap.Watcher(ctx)
-	if err != nil {
-		if cs.psclient != nil {
-			cs.psclient.Close()
-		}
-		return nil, fmt.Errorf("watch failed: %v", err)
-	}
+	cs.w = cs.configmap.Watcher(ctx)
 	cs.loader = &command.ConfigMapLoader{
 		ConfigMap: cs.configmap,
 		ConfigLoader: command.ConfigLoader{
@@ -287,6 +281,10 @@ func main() {
 	}
 
 	err = view.Register(configViews...)
+	if err != nil {
+		logger.Fatal(err)
+	}
+	err = view.Register(command.DefaultViews...)
 	if err != nil {
 		logger.Fatal(err)
 	}

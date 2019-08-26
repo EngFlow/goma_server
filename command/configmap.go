@@ -9,21 +9,40 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"path"
 	"sort"
 	"strings"
 	"time"
-
-	"google.golang.org/api/iterator"
 
 	"cloud.google.com/go/pubsub"
 	"cloud.google.com/go/storage"
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
 	"github.com/googleapis/google-cloud-go-testing/storage/stiface"
+	"go.opencensus.io/stats"
+	"go.opencensus.io/stats/view"
+	"google.golang.org/api/iterator"
 
 	"go.chromium.org/goma/server/log"
 	cmdpb "go.chromium.org/goma/server/proto/command"
+)
+
+var (
+	pubsubErrors = stats.Int64(
+		"go.chromium.org/goma/command/configmap.pubsub-error",
+		"configmap pubsub error",
+		stats.UnitDimensionless)
+
+	// DefaultViews are the default views provided by this package.
+	// You need to register the view for data to actually be collected.
+	DefaultViews = []*view.View{
+		{
+			Description: "configmap pubsub error",
+			Measure:     pubsubErrors,
+			Aggregation: view.LastValue(),
+		},
+	}
 )
 
 // ConfigMapLoader loads toolchain_config config map.
@@ -44,7 +63,7 @@ type ConfigMapLoader struct {
 // ConfigMap is an interface to access toolchain config map.
 type ConfigMap interface {
 	// Watcher returns config map watcher.
-	Watcher(ctx context.Context) (ConfigMapWatcher, error)
+	Watcher(ctx context.Context) ConfigMapWatcher
 
 	// Seqs returns a map of config name to sequence.
 	Seqs(ctx context.Context) (map[string]string, error)
@@ -178,6 +197,34 @@ func (w configMapBucketWatcher) Close() error {
 	return w.s.Delete(ctx)
 }
 
+type configMapBucketPoller struct {
+	baseDelay time.Duration
+	done      chan bool
+}
+
+func (w configMapBucketPoller) Next(ctx context.Context) error {
+	logger := log.FromContext(ctx)
+	dur := time.Duration(float64(w.baseDelay) * (1 + 0.2*(rand.Float64()*2-1)))
+	logger.Infof("poll wait %s", dur)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-w.done:
+		return errors.New("poller closed")
+	case <-time.After(dur):
+		// trigger to load seqs, but loader might detect no seq updates.
+		return nil
+	}
+}
+
+func (w configMapBucketPoller) Close() error {
+	ctx := context.Background()
+	logger := log.FromContext(ctx)
+	logger.Infof("poller close")
+	close(w.done)
+	return nil
+}
+
 func (c ConfigMapBucket) configMap(ctx context.Context) (*cmdpb.ConfigMap, error) {
 	bucket, obj, err := splitGCSPath(c.URI)
 	if err != nil {
@@ -221,7 +268,23 @@ func cloudStorageNotification(ctx context.Context, s stiface.Client, bucket stri
 
 var storageNotification = cloudStorageNotification
 
-func (c ConfigMapBucket) Watcher(ctx context.Context) (ConfigMapWatcher, error) {
+func (c ConfigMapBucket) Watcher(ctx context.Context) ConfigMapWatcher {
+	logger := log.FromContext(ctx)
+	w, err := c.pubsubWatcher(ctx)
+	if err == nil {
+		stats.Record(ctx, pubsubErrors.M(0))
+		logger.Infof("use pubsub watcher")
+		return w
+	}
+	stats.Record(ctx, pubsubErrors.M(1))
+	logger.Errorf("failed to use pubsub watcher: %v", err)
+	return configMapBucketPoller{
+		baseDelay: 1 * time.Hour,
+		done:      make(chan bool),
+	}
+}
+
+func (c ConfigMapBucket) pubsubWatcher(ctx context.Context) (ConfigMapWatcher, error) {
 	bucket, _, err := splitGCSPath(c.URI)
 	if err != nil {
 		return nil, err
@@ -257,6 +320,11 @@ func (c ConfigMapBucket) Watcher(ctx context.Context) (ConfigMapWatcher, error) 
 		logger.Infof("subscriber:%s not found. creating", c.SubscriberID)
 		subscription, err = c.PubsubClient.CreateSubscription(ctx, c.SubscriberID, pubsub.SubscriptionConfig{
 			Topic: topic,
+			// experimental config.
+			// minimum is 1 day
+			// +12 hours margin, to cover summar time switch (+1 hour)
+			// b/112820308
+			ExpirationPolicy: 36 * time.Hour,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("create subscription:%s err:%v", c.SubscriberID, err)

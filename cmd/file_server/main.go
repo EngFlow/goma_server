@@ -45,17 +45,18 @@ type admissionController struct {
 	limit int64
 }
 
-func (a admissionController) AdmitPut(in *cachepb.PutReq) error {
+func (a admissionController) AdmitPut(ctx context.Context, in *cachepb.PutReq) error {
 	if a.limit <= 0 {
 		return nil
 	}
 	rss := server.ResidentMemorySize()
 	s := int64(len(in.Kv.Key) + len(in.Kv.Value))
-	if rss+s <= a.limit {
+	if rss+2*s <= a.limit {
 		return nil
 	}
+	newRSS := server.GC(ctx)
 	// TODO: with retryinfo?
-	return status.Errorf(codes.ResourceExhausted, "memory size %d + req:%d > limit %d", rss, s, a.limit)
+	return status.Errorf(codes.ResourceExhausted, "memory size %d + req:%d > limit %d: gc->%d", rss, s, a.limit, newRSS)
 }
 
 func main() {

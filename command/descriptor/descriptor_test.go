@@ -338,6 +338,46 @@ InstalledDir: /var/tmp/clang/third_party/llvm-build/Release+Asserts/bin
 	}
 }
 
+func TestDartAnalyzerVersionTarget(t *testing.T) {
+	for _, tc := range []struct {
+		out     string
+		version string
+		target  string
+	}{
+		{
+			out:     "dartanalyzer version 2.1.1-dev.1.0\n",
+			version: "2.1.1-dev.1.0",
+			target:  "x86_64-unknown-linux-gnu",
+		},
+		{
+			out:     "dartanalyzer version 2.5.0-edge.2b3336b51eda58fe049c8a8d81b7576aaa98c218\n",
+			version: "2.5.0-edge.2b3336b51eda58fe049c8a8d81b7576aaa98c218",
+			target:  "x86_64-unknown-linux-gnu",
+		},
+	} {
+		version, target, err := DartAnalyzerVersionTarget([]byte(tc.out))
+		if err != nil {
+			t.Errorf("expect no error from test case %v+, got an error: %v", tc, err)
+		}
+		if version != tc.version {
+			t.Errorf("expect version %q, got %q", tc.version, version)
+		}
+		if target != tc.target {
+			t.Errorf("expect target %q, got %q", tc.target, target)
+		}
+	}
+
+	// failure case
+	for _, tc := range []string{
+		"Dart VM version: 2.5.0-edge.2b3336b51eda58fe049c8a8d81b7576aaa98c218 (Wed Jul 17 09:11:15 2019 +0000) on \"linux_x64\"",
+	} {
+		_, _, err := DartAnalyzerVersionTarget([]byte(tc))
+		if err == nil {
+			t.Errorf("expect parsing error in %q, but got nil", tc)
+		}
+	}
+}
+
 func TestResolveSymlinks(t *testing.T) {
 	d := &Descriptor{
 		fname: "dummy",

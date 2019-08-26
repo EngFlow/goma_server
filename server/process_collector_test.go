@@ -79,7 +79,7 @@ func TestParseStatMemory(t *testing.T) {
 		t.Errorf("parseStatMemory(ctx, procSelfStat)=_, _, %v", err)
 	}
 	if got, want := vsize, int64(8044544); got != want {
-		t.Errorf("parseStatMemroy(ctx, procSelfStat).vss=%d; want=%d", got, want)
+		t.Errorf("parseStatMemory(ctx, procSelfStat).vss=%d; want=%d", got, want)
 	}
 	if got, want := rss, int64(169*os.Getpagesize()); got != want {
 		t.Errorf("parseStatMemory(ctx, procSelfStat).rss=%d; want=%d", got, want)

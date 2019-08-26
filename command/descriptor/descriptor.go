@@ -529,6 +529,12 @@ func selector(c Config) (*pb.Selector, error) {
 				return nil, fmt.Errorf("target %s [%s]: %v", c.Filename, sha256, err)
 			}
 		}
+	case "dartanalyzer":
+		v, t, err = dartAnalyzerVersionTarget(c.Filename, c.Runner)
+		if err != nil {
+			return nil, err
+		}
+
 	default:
 		// subprogram would not have version,target (?)
 	}
@@ -705,4 +711,26 @@ func clangclTarget(cmd string, runner Runner) (string, error) {
 		return "", fmt.Errorf("failed to take clang-cl target: %v", err)
 	}
 	return ClangClTarget(out)
+}
+
+// DartAnalyzerVersionTarget returns the dartanalyzer's version and target from
+// output of `dartanalyzer --version`
+func DartAnalyzerVersionTarget(out []byte) (string, string, error) {
+	// output should be like
+	// `dartanalyzer version 2.1.1-dev.1.0`.
+	const dartanalyzerPrefix = "dartanalyzer version "
+	output := strings.TrimSpace(string(out))
+	if !strings.HasPrefix(output, dartanalyzerPrefix) {
+		return "", "", fmt.Errorf("failed to parse dartanalyzer version: %q", output)
+	}
+	// dartanalyzer does not have a target. Always return linux here.
+	return output[len(dartanalyzerPrefix):], "x86_64-unknown-linux-gnu", nil
+}
+
+func dartAnalyzerVersionTarget(cmd string, runner Runner) (string, string, error) {
+	out, err := runner(cmd, "--version")
+	if err != nil {
+		return "", "", fmt.Errorf("failed to take dartanalyzer version and target: %v", err)
+	}
+	return DartAnalyzerVersionTarget(out)
 }

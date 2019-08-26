@@ -13,7 +13,7 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	"runtime"
+	"runtime/debug"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -53,7 +53,7 @@ var (
 			Aggregation: view.LastValue(),
 		},
 		{
-			Name:        "go.chromium.org/goma/server/server/process-virtual-memroy",
+			Name:        "go.chromium.org/goma/server/server/process-virtual-memory",
 			Description: "Virtual memory size",
 			Measure:     virtualMemorySize,
 			Aggregation: view.LastValue(),
@@ -85,7 +85,7 @@ func GC(ctx context.Context) int64 {
 	logger.Infof("GC start: rss=%d", rss)
 	select {
 	case gcSema <- true:
-		runtime.GC()
+		debug.FreeOSMemory()
 		<-gcSema
 	default:
 		logger.Infof("GC already running")

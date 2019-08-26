@@ -53,6 +53,13 @@ var (
 	}
 )
 
+const (
+	maxKeyLength = 255
+	// Printable ASCII characters range from 0x20 to 0x7e
+	validKeyValueMin = 32
+	validKeyValueMax = 126
+)
+
 type resultValue string
 
 const (
@@ -72,6 +79,21 @@ const (
 )
 
 func recordToolchainSelect(ctx context.Context, s selector, result resultValue) error {
+	// tag string cannot be over 255 or containing non-printable ascii characters.
+	// https://github.com/census-instrumentation/opencensus-go/blob/264a2a48d94c062252389fffbc308ba555e35166/tag/validate.go
+	tagNormalizer := func(tag string) string {
+		if len(tag) > maxKeyLength {
+			tag = tag[:maxKeyLength]
+		}
+		buf := []rune(tag)
+		for i, v := range buf {
+			if validKeyValueMin > v || v > validKeyValueMax {
+				buf[i] = '_'
+			}
+		}
+		return string(buf)
+	}
+
 	// selector string can be too long, more than tag value limit
 	// (255 ASCII characters).
 	// http://b/115441117
@@ -80,13 +102,10 @@ func recordToolchainSelect(ctx context.Context, s selector, result resultValue) 
 	fmt.Fprintf(&buf, " t:%s", s.Target)
 	fmt.Fprintf(&buf, " b:%s", s.BinaryHash)
 	fmt.Fprintf(&buf, " v:%s", s.Version)
-	sval := buf.String()
-	if len(sval) > 255 {
-		sval = sval[:255]
-	}
+
 	ctx, err := tag.New(ctx,
-		tag.Upsert(selectorKey, sval),
-		tag.Upsert(resultKey, string(result)))
+		tag.Upsert(selectorKey, tagNormalizer(buf.String())),
+		tag.Upsert(resultKey, tagNormalizer(string(result))))
 	if err != nil {
 		return err
 	}
@@ -263,7 +282,7 @@ func (in *Inventory) pickCmd(ctx context.Context, cmdSel selector, subprogSels [
 	record := func(ctx context.Context, s selector, result resultValue) {
 		err := recordToolchainSelect(ctx, s, result)
 		if err != nil {
-			logger.Fatalf("failed to record stats: %s=%s", s, result)
+			logger.Errorf("failed to record stats: %s=%s, err: %v", s, result, err)
 		}
 	}
 

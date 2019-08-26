@@ -25,12 +25,12 @@ import (
 
 // AdmissionController checks incoming request.
 type AdmissionController interface {
-	AdmitPut(*pb.PutReq) error
+	AdmitPut(context.Context, *pb.PutReq) error
 }
 
 type nullAdmissionController struct{}
 
-func (nullAdmissionController) AdmitPut(*pb.PutReq) error { return nil }
+func (nullAdmissionController) AdmitPut(context.Context, *pb.PutReq) error { return nil }
 
 // Cache represents key-value cache using google cloud storage.
 type Cache struct {
@@ -80,7 +80,7 @@ func checkAttrs(attr *storage.ObjectAttrs, value []byte) error {
 
 func (c *Cache) Put(ctx context.Context, in *pb.PutReq) (*pb.PutResp, error) {
 	logger := log.FromContext(ctx)
-	if err := c.AdmissionController.AdmitPut(in); err != nil {
+	if err := c.AdmissionController.AdmitPut(ctx, in); err != nil {
 		logger.Warnf("admission error: %v", err)
 		return nil, err
 	}

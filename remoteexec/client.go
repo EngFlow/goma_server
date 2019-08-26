@@ -182,8 +182,9 @@ func ExecuteAndWait(ctx context.Context, c Client, req *rpb.ExecuteRequest, opts
 	type responseStream interface {
 		Recv() (*lpb.Operation, error)
 	}
+	pctx := ctx
 	err := rpc.Retry{}.Do(ctx, func() error {
-		ctx, cancel := context.WithTimeout(ctx, 1*time.Minute)
+		ctx, cancel := context.WithTimeout(pctx, 1*time.Minute)
 		defer cancel()
 		var stream responseStream
 		var err error
@@ -226,7 +227,7 @@ func ExecuteAndWait(ctx context.Context, c Client, req *rpb.ExecuteRequest, opts
 				logger.Errorf("%s", err)
 				return err
 			}
-			return erespErr(ctx, resp)
+			return erespErr(pctx, resp)
 		}
 	})
 	recordFinish()
@@ -264,6 +265,19 @@ func erespErr(ctx context.Context, eresp *rpb.ExecuteResponse) error {
 		// codes.Unavailable, so that rpc.Retry will retry.
 		st.Code = int32(codes.Unavailable)
 		return status.FromProto(st).Err()
+
+	case codes.Aborted:
+		if ctx.Err() == nil {
+			// ctx is not cancelled, but returned
+			// code = Aborted, context canceled
+			// in this case, it would be retriable.
+			logger.Warnf("execute reponse: aborted %s, but ctx is still active", st)
+			st = proto.Clone(st).(*spb.Status)
+			// codes.Unavailable, so that rpc.Retry will retry.
+			st.Code = int32(codes.Unavailable)
+			return status.FromProto(st).Err()
+		}
+		fallthrough
 	default:
 		logger.Errorf("execute response: error %s", st)
 	}
