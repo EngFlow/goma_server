@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/tls"
 	"flag"
+	"net/http"
 	"path/filepath"
 
 	rpb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
@@ -20,6 +21,7 @@ import (
 	"go.opencensus.io/stats"
 	"go.opencensus.io/stats/view"
 	"go.opencensus.io/tag"
+	"go.opencensus.io/zpages"
 	"golang.org/x/oauth2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -246,5 +248,6 @@ func main() {
 
 	hs := server.NewHTTP(*mport, nil)
 
+	zpages.Handle(http.DefaultServeMux, "/debug")
 	server.Run(ctx, s, hs)
 }

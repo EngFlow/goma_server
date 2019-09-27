@@ -5,8 +5,10 @@
 package log
 
 import (
-	"fmt"
+	"context"
 	"log"
+	"os"
+	"strconv"
 
 	gce "cloud.google.com/go/compute/metadata"
 	grpczap "github.com/grpc-ecosystem/go-grpc-middleware/logging/zap"
@@ -14,77 +16,47 @@ import (
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/grpclog"
 )
 
-func init() {
-	setGRPCLogger()
-}
+var (
+	gRPCLevel        = zapcore.ErrorLevel
+	gRPCVerboseLevel int
+)
 
-func setGRPCLogger() {
+func mustGRPCLogger() *zap.Logger {
+	// emulate grpclog/loggerv2.go
+	switch os.Getenv("GRPC_GO_LOG_SEVERITY_LEVEL") {
+	case "WARNING", "warning":
+		gRPCLevel = zapcore.WarnLevel
+	case "INFO", "info":
+		gRPCLevel = zapcore.InfoLevel
+	default:
+		gRPCLevel = zapcore.ErrorLevel
+	}
+
+	vLevel := os.Getenv("GRPC_GO_LOG_VERBOSITY_LEVEL")
+	if vl, err := strconv.Atoi(vLevel); err == nil {
+		gRPCVerboseLevel = vl
+	}
+	FromContext(context.Background()).Infof("grpc log level = %s verbosity = %d", gRPCLevel, gRPCVerboseLevel)
+
+	zapCfg := zapConfig()
+	zapCfg.Level = zap.NewAtomicLevelAt(gRPCLevel)
+	gl, err := zapCfg.Build()
+	if err != nil {
+		FromContext(context.Background()).Fatalf("failed to build grpc zap logger: %v", err)
+	}
 	// skip 2
 	//   zapGRPCLogger method
 	//   grpclog func
-	zgl := &zapGRPCLogger{logger.WithOptions(zap.AddCallerSkip(2)).With(zap.String("system", "grpc"), zap.Bool("grpc_log", true))}
-	grpclog.SetLoggerV2(zgl)
+	// ReplaceGrpcLoggerV2WithVerbosity sets
+	// "system=grpc" and "grpc_log=true".
+	return gl.WithOptions(zap.AddCallerSkip(2))
 }
 
-// zapGRPCLogger for logger for grpc.
-// It will log at debug level for grpc Info level log message
-// because it is too chatty.
-type zapGRPCLogger struct {
-	logger *zap.Logger
+func init() {
+	grpczap.ReplaceGrpcLoggerV2WithVerbosity(grpcLogger, gRPCVerboseLevel)
 }
-
-func (l *zapGRPCLogger) Info(args ...interface{}) {
-	l.logger.Debug(fmt.Sprint(args...))
-}
-
-func (l *zapGRPCLogger) Infoln(args ...interface{}) {
-	l.logger.Debug(fmt.Sprint(args...))
-}
-
-func (l *zapGRPCLogger) Infof(format string, args ...interface{}) {
-	l.logger.Debug(fmt.Sprintf(format, args...))
-}
-
-func (l *zapGRPCLogger) Warning(args ...interface{}) {
-	l.logger.Warn(fmt.Sprint(args...))
-}
-
-func (l *zapGRPCLogger) Warningln(args ...interface{}) {
-	l.logger.Warn(fmt.Sprint(args...))
-}
-
-func (l *zapGRPCLogger) Warningf(format string, args ...interface{}) {
-	l.logger.Warn(fmt.Sprintf(format, args...))
-}
-
-func (l *zapGRPCLogger) Error(args ...interface{}) {
-	l.logger.Error(fmt.Sprint(args...))
-}
-
-func (l *zapGRPCLogger) Errorln(args ...interface{}) {
-	l.logger.Error(fmt.Sprint(args...))
-}
-
-func (l *zapGRPCLogger) Errorf(format string, args ...interface{}) {
-	l.logger.Error(fmt.Sprintf(format, args...))
-}
-
-func (l *zapGRPCLogger) Fatal(args ...interface{}) {
-	l.logger.Fatal(fmt.Sprint(args...))
-}
-
-func (l *zapGRPCLogger) Fatalf(format string, args ...interface{}) {
-	l.logger.Fatal(fmt.Sprintf(format, args...))
-}
-
-func (l *zapGRPCLogger) Fatalln(args ...interface{}) {
-	l.logger.Fatal(fmt.Sprint(args...))
-}
-
-func (l *zapGRPCLogger) V(level int) bool { return true }
 
 // GRPCUnaryServerInterceptor returns server interceptor to log grpc calls.
 func GRPCUnaryServerInterceptor(opts ...grpczap.Option) grpc.UnaryServerInterceptor {
@@ -99,39 +71,34 @@ func GRPCUnaryServerInterceptor(opts ...grpczap.Option) grpc.UnaryServerIntercep
 			return grpczap.DefaultCodeToLevel(code)
 		}),
 	}, opts...)
-	return grpczap.UnaryServerInterceptor(logger, opts...)
+	return grpczap.UnaryServerInterceptor(grpcLogger, opts...)
 }
 
-// mustZapLogger returns
-// * zap logger configured for GKE container if running on compute engine
-// * otherwise, use zap's default logger for development outputting non-json text format log.
-func mustZapLogger(options ...zap.Option) *zap.Logger {
+func zapConfig() zap.Config {
 	if !gce.OnGCE() {
 		zapCfg := zap.NewDevelopmentConfig()
 		zapCfg.DisableStacktrace = true
-		logger, err := zapCfg.Build(options...)
-		if err != nil {
-			log.Fatalf("failed to build zap logger: %v", err)
-		}
-		return logger
+		return zapCfg
 	}
 
 	zapCfg := zap.NewProductionConfig()
-
 	zapCfg.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
-
 	// To show text content only in cloud logging top level viewer.
 	// https://cloud.google.com/logging/docs/view/logs_viewer_v2#expanding
 	zapCfg.EncoderConfig.MessageKey = "message"
-
 	// https://github.com/GoogleCloudPlatform/fluent-plugin-google-cloud/blob/cea0afd43287ce35d6aa3e1b29e791943d379df4/lib/fluent/plugin/out_google_cloud.rb#L950
 	zapCfg.EncoderConfig.TimeKey = "time"
 	zapCfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-
 	// https://github.com/GoogleCloudPlatform/fluent-plugin-google-cloud/blob/cea0afd43287ce35d6aa3e1b29e791943d379df4/lib/fluent/plugin/out_google_cloud.rb#L980
 	zapCfg.EncoderConfig.LevelKey = "severity"
+	return zapCfg
+}
 
-	logger, err := zapCfg.Build(options...)
+// mustZapLoggerConfig returns
+// * zap logger configured for GKE container if running on compute engine
+// * otherwise, use zap's default logger for development outputting non-json text format log.
+func mustZapLogger(options ...zap.Option) *zap.Logger {
+	logger, err := zapConfig().Build(options...)
 	if err != nil {
 		log.Fatalf("failed to build zap logger: %v", err)
 	}

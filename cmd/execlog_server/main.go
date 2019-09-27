@@ -11,7 +11,9 @@ package main
 import (
 	"context"
 	"flag"
+	"net/http"
 
+	"go.opencensus.io/zpages"
 	"google.golang.org/grpc"
 
 	"go.chromium.org/goma/server/execlog"
@@ -52,6 +54,6 @@ func main() {
 	pb.RegisterLogServiceServer(s.Server, els)
 
 	hs := server.NewHTTP(*mport, nil)
-
+	zpages.Handle(http.DefaultServeMux, "/debug")
 	server.Run(ctx, s, hs)
 }

@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"cloud.google.com/go/compute/metadata"
+	grpczap "github.com/grpc-ecosystem/go-grpc-middleware/logging/zap"
 	"go.opencensus.io/tag"
 	"go.opencensus.io/trace"
 	"go.uber.org/zap"
@@ -21,7 +22,8 @@ import (
 )
 
 var (
-	logger = mustZapLogger()
+	logger     = mustZapLogger()
+	grpcLogger = mustGRPCLogger()
 
 	tagKeys []tag.Key
 
@@ -34,7 +36,8 @@ var (
 //   log.SetZapLogger(zap.NewExample())
 func SetZapLogger(zapLogger *zap.Logger) {
 	logger = zapLogger
-	setGRPCLogger()
+	grpcLogger = zapLogger.WithOptions(zap.AddCallerSkip(2))
+	grpczap.ReplaceGrpcLoggerV2WithVerbosity(grpcLogger, gRPCVerboseLevel)
 }
 
 // RegsiterTagKey registers tag key that would be used for log context.

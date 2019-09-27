@@ -16,7 +16,6 @@ import (
 	"syscall"
 
 	"go.opencensus.io/plugin/ocgrpc"
-	"go.opencensus.io/zpages"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
@@ -108,13 +107,13 @@ func NewHTTPS(hs *http.Server, certFile, keyFile string) Server {
 }
 
 // Run runs servers.
-// It will registers /debug/* for opencensus zpages on default http handler.
 // This is typically invoked as the last statement in the server's main function.
 func Run(ctx context.Context, servers ...Server) {
 	ctx, cancel := context.WithCancel(ctx)
 	logger := log.FromContext(ctx)
 
-	zpages.Handle(http.DefaultServeMux, "/debug")
+	// TODO: enable zpages here.
+	// zpages.Handle(http.DefaultServeMux, "/debug")
 	for _, s := range servers {
 		go func(s Server) {
 			defer cancel()

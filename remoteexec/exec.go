@@ -223,6 +223,19 @@ func (id inputDigestData) String() string {
 	return fmt.Sprintf("%s %s", id.Data.String(), id.filename)
 }
 
+func changeSymlinkAbsToRel(e merkletree.Entry) (merkletree.Entry, error) {
+	dir := filepath.Dir(e.Name)
+	if !filepath.IsAbs(dir) {
+		return merkletree.Entry{}, fmt.Errorf("absolute symlink path not allowed: %s -> %s", e.Name, e.Target)
+	}
+	target, err := filepath.Rel(dir, e.Target)
+	if err != nil {
+		return merkletree.Entry{}, fmt.Errorf("failed to make relative for absolute symlink path: %s in %s -> %s: %v", e.Name, dir, e.Target, err)
+	}
+	e.Target = target
+	return e, nil
+}
+
 // newInputTree constructs input tree from req.
 // it returns non-nil ExecResp for:
 // - missing inputs
@@ -448,13 +461,15 @@ func (r *request) newInputTree(ctx context.Context) *gomapb.ExecResp {
 			return nil
 		}
 		if !symAbsOk && e.Target != "" && filepath.IsAbs(e.Target) {
-			r.err = fmt.Errorf("absolute symlink path not allowed: %s -> %s", e.Name, e.Target)
-			return nil
+			e, err = changeSymlinkAbsToRel(e)
+			if err != nil {
+				r.err = err
+				return nil
+			}
 		}
 		fname, err := rootRel(r.filepath, e.Name, r.gomaReq.GetCwd(), r.tree.RootDir())
 		if err != nil {
 			if err == errOutOfRoot {
-				logger.Warnf("filename %s: %v", e.Name, err)
 				continue
 			}
 			r.err = fmt.Errorf("command file: %v", err)
@@ -471,6 +486,10 @@ func (r *request) newInputTree(ctx context.Context) *gomapb.ExecResp {
 		for _, d := range dirs {
 			rel, err := rootRel(r.filepath, d, r.gomaReq.GetCwd(), r.tree.RootDir())
 			if err != nil {
+				if err == errOutOfRoot {
+					logger.Warnf("%s %s: %v", name, d, err)
+					continue
+				}
 				r.err = fmt.Errorf("%s %s: %v", name, d, err)
 				return
 			}

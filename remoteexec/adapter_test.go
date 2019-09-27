@@ -1089,6 +1089,8 @@ func TestAdaptorHandleArbitraryToolchainSupportNonCwdAgnostic(t *testing.T) {
 	}
 }
 
+// TODO: add test for ATS+chroot case using symlinks.
+
 func TestAdapterDockerProperties(t *testing.T) {
 	for _, tc := range []struct {
 		desc string

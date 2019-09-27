@@ -201,7 +201,6 @@ func (m *MerkleTree) buildTree(ctx context.Context, curdir *rpb.Directory, dirna
 		// http://b/80279190
 		// to workaround this put dummy file to make sure empty dir
 		// is created.
-		logger.Warnf("add .keep_me in %s", dirname)
 		emptyFile := digest.Bytes("empty file", nil)
 		m.store.Set(emptyFile)
 		curdir.Files = append(curdir.Files, &rpb.FileNode{

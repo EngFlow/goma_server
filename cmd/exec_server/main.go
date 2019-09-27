@@ -30,6 +30,7 @@ import (
 	"go.opencensus.io/stats"
 	"go.opencensus.io/stats/view"
 	"go.opencensus.io/tag"
+	"go.opencensus.io/zpages"
 	"google.golang.org/api/option"
 	bspb "google.golang.org/genproto/googleapis/bytestream"
 	"google.golang.org/grpc"
@@ -431,5 +432,6 @@ func main() {
 		logger.Fatalf("no configs available in %s", timeout)
 	}
 	hs := server.NewHTTP(*mport, nil)
+	zpages.Handle(http.DefaultServeMux, "/debug")
 	server.Run(ctx, s, hs, confServer)
 }

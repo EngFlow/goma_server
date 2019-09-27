@@ -6,12 +6,74 @@ package remoteexec
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"go.chromium.org/goma/server/command/descriptor/posixpath"
 )
 
 func TestGccCwdAgnostic(t *testing.T) {
+
+	baseReleaseArgs := []string{
+		"../../third_party/llvm-build/Release+Asserts/bin/clang++",
+		"-MMD",
+		"-MF",
+		"obj/base/base/time.o.d",
+		"-DUSE_SYMBOLIZE",
+		"-I../..",
+		"-fno-strict-aliasing",
+		"--param=ssp-buffer-size=4",
+		"-fPIC",
+		"-pipe",
+		"-B../../third_party/binutils/Linux_x64/Release/bin",
+		"-pthread",
+		"-Xclang",
+		"-mllvm",
+		"-Xclang",
+		"-instcombine-lower-dbg-declare=0",
+		"-no-canonical-prefixes",
+		"-m64",
+		"-march=x86-64",
+		"-Wall",
+		"-g0",
+		"-Xclang",
+		"-load",
+		"-Xclang",
+		"../../third_party/llvm-build/Release+Asserts/lib/libFindBadCustructs.so",
+		"-Xclang",
+		"-add-plugin",
+		"-Xclang",
+		"find-bad-constructs",
+		"-Xclang",
+		"-plugin-arg-find-bad-constructs",
+		"-Xclang",
+		"check-enum-max-value",
+		"-isystem../../build/linux/debian_sid_amd64-sysroot/usr/include/glib-2.0",
+		"-O2",
+		"--sysroot=../../build/linux/debian_sid_amd64-sysroot",
+		"-c",
+		"../../base/time/time.cc",
+		"-o",
+		"obj/base/base/time.o",
+	}
+
+	modifyArgs := func(args []string, prefix, replace string) []string {
+		var ret []string
+		found := false
+		for _, arg := range args {
+			if strings.HasPrefix(arg, prefix) {
+				ret = append(ret, replace)
+				found = true
+				continue
+			}
+			ret = append(ret, arg)
+		}
+		if !found {
+			ret = append(ret, replace)
+		}
+		return ret
+	}
+
 	for _, tc := range []struct {
 		desc        string
 		args        []string
@@ -20,48 +82,7 @@ func TestGccCwdAgnostic(t *testing.T) {
 	}{
 		{
 			desc: "chromium base release",
-			args: []string{
-				"../../third_party/llvm-build/Release+Asserts/bin/clang++",
-				"-MMD",
-				"-MF",
-				"obj/base/base/time.o.d",
-				"-DUSE_SYMBOLIZE",
-				"-I../..",
-				"-fno-strict-aliasing",
-				"--param=ssp-buffer-size=4",
-				"-fPIC",
-				"-pipe",
-				"-B../../third_party/binutils/Linux_x64/Release/bin",
-				"-pthread",
-				"-Xclang",
-				"-mllvm",
-				"-Xclang",
-				"-instcombine-lower-dbg-declare=0",
-				"-no-canonical-prefixes",
-				"-m64",
-				"-march=x86-64",
-				"-Wall",
-				"-g0",
-				"-Xclang",
-				"-load",
-				"-Xclang",
-				"../../third_party/llvm-build/Release+Asserts/lib/libFindBadCustructs.so",
-				"-Xclang",
-				"-add-plugin",
-				"-Xclang",
-				"find-bad-constructs",
-				"-Xclang",
-				"-plugin-arg-find-bad-constructs",
-				"-Xclang",
-				"check-enum-max-value",
-				"-isystem../../build/linux/debian_sid_amd64-sysroot/usr/include/glib-2.0",
-				"-O2",
-				"--sysroot=../../build/linux/debian_sid_amd64-sysroot",
-				"-c",
-				"../../base/time/time.cc",
-				"-o",
-				"obj/base/base/time.o",
-			},
+			args: baseReleaseArgs,
 			envs: []string{
 				"PWD=/b/c/b/linux/src/out/Release",
 			},
@@ -116,6 +137,49 @@ func TestGccCwdAgnostic(t *testing.T) {
 				"PWD=/b/c/b/linux/src/out/Debug",
 			},
 			cwdAgnostic: false,
+		},
+		{
+			desc: "resource-dir relative",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-resource-dir=../../third_party/llvm-build-release+Asserts/bin/clang/10.0.0"),
+			cwdAgnostic: true,
+		},
+		{
+			desc: "resource-dir absolute",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-resource-dir=/b/c/b/linux/src/third_party/llvm-build-release+Asserts/bin/clang/10.0.0"),
+			cwdAgnostic: false,
+		},
+		{
+			desc: "isystem absolute",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-isystem/b/c/b/linux/src/build/linux/debian_sid_amd64-sysroot/usr/include/glib-2.0"),
+			cwdAgnostic: false,
+		},
+		{
+			desc: "sysroot absolute",
+			args: modifyArgs(baseReleaseArgs,
+				"--sysroot",
+				"--sysroot=/b/c/b/linux/build/linux/debian_sid_amd64-sysroot"),
+			cwdAgnostic: false,
+		},
+		{
+			desc: "llvm -asan option",
+			// https://b/issues/141210713#comment3
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-mllvm",
+				"-asan-globals=0"),
+			cwdAgnostic: true,
+		},
+		{
+			desc: "llvm -regalloc option",
+			// https://b/issues/141210713#comment4
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-mllvm",
+				"-regalloc=pbqp",
+				"-mllvm",
+				"-pbqp-coalescing"),
+			cwdAgnostic: true,
 		},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {

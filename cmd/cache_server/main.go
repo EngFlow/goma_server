@@ -14,6 +14,7 @@ import (
 	"runtime/debug"
 
 	"cloud.google.com/go/storage"
+	"go.opencensus.io/zpages"
 	"google.golang.org/api/option"
 
 	"go.chromium.org/goma/server/cache"
@@ -23,6 +24,7 @@ import (
 	"go.chromium.org/goma/server/server"
 
 	_ "expvar"
+	"net/http"
 	_ "net/http/pprof"
 )
 
@@ -80,5 +82,6 @@ func main() {
 	pb.RegisterCacheServiceServer(s.Server, c)
 
 	hs := server.NewHTTP(*mport, nil)
+	zpages.Handle(http.DefaultServeMux, "/debug")
 	server.Run(ctx, s, hs)
 }

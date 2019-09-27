@@ -78,7 +78,6 @@ Running user is granted by default. If you need to allow other users, you
 need to specify them by `--whitelisted-users`.
 
 Log messages will be output to stderr.
-[OpenCensus z-pages](https://opencensus.io/zpages/go/) ara available at http://localhost:$PORT/debug/
 
 ### How to use
 

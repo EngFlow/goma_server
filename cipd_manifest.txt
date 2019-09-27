@@ -13,7 +13,7 @@ $VerifiedPlatform linux-amd64
 # https://chrome-infra-packages.appspot.com/
 
 # go
-infra/go/${platform} version:1.12.8
+infra/go/${platform} version:1.13
 
 # protoc
 # If the version you want is missing, please follow the instruction in:

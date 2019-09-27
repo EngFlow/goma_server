@@ -20,6 +20,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"go.opencensus.io/stats/view"
 	"go.opencensus.io/trace"
+	"go.opencensus.io/zpages"
 	k8sapi "golang.org/x/build/kubernetes/api"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -209,6 +210,6 @@ func main() {
 
 	hsMain := newMainServer(mux)
 	hsMonitoring := server.NewHTTP(*mport, nil)
-
+	zpages.Handle(http.DefaultServeMux, "/debug")
 	server.Run(ctx, s, hsMain, hsMonitoring)
 }
