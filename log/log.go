@@ -21,7 +21,11 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+type ctxKeyType int
+
 var (
+	ctxKey ctxKeyType
+
 	logger     = mustZapLogger()
 	grpcLogger = mustGRPCLogger()
 
@@ -45,11 +49,19 @@ func RegisterTagKey(key tag.Key) {
 	tagKeys = append(tagKeys, key)
 }
 
+// NewContext returns a new Context that carries logger.
+func NewContext(ctx context.Context, logger Logger) context.Context {
+	return context.WithValue(ctx, ctxKey, logger)
+}
+
 // FromContext returns logger with context.
 // opencensus's tag registered by RegisterTagKey and
 // trace's span-id and trace-id will be added
 // as context information of the log.
 func FromContext(ctx context.Context) Logger {
+	if logger, ok := ctx.Value(ctxKey).(Logger); ok {
+		return logger
+	}
 	tm := tag.FromContext(ctx)
 
 	var fields []zapcore.Field

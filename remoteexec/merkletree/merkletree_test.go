@@ -561,3 +561,13 @@ func openDir(ctx context.Context, ds *digest.Store, d *rpb.Digest) (*rpb.Directo
 	err := datasource.ReadProto(ctx, data, dir)
 	return dir, err
 }
+
+func BenchmarkSetDir(b *testing.B) {
+	ds := digest.NewStore()
+	m := New(posixpath.FilePath{}, "/", ds)
+	cur := dirstate{name: ".", dir: m.root}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		m.setDir(cur, "subdir")
+	}
+}

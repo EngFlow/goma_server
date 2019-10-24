@@ -123,7 +123,6 @@ func (a *Auth) Check(ctx context.Context, req *http.Request) (*enduser.EndUser, 
 	ctx, span := trace.StartSpan(ctx, "go.chromium.org/goma/server/auth.Auth.Check")
 	defer span.End()
 	logger := log.FromContext(ctx)
-	logger.Debugf("httprpc.Auth.Check %s", req.URL.Path)
 
 	authorization := req.Header.Get("Authorization")
 	if authorization == "" {

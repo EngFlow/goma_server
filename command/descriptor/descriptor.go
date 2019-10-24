@@ -7,6 +7,7 @@ package descriptor
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -530,10 +531,14 @@ func selector(c Config) (*pb.Selector, error) {
 			}
 		}
 	case "dartanalyzer":
-		v, t, err = dartAnalyzerVersionTarget(c.Filename, c.Runner)
+		v, err = dartAnalyzerVersion(c.Filename, c.Runner)
 		if err != nil {
 			return nil, err
 		}
+		if c.Target == "" {
+			return nil, errors.New("missing target configuration for dartanalyzer")
+		}
+		t = c.Target
 
 	default:
 		// subprogram would not have version,target (?)
@@ -713,24 +718,23 @@ func clangclTarget(cmd string, runner Runner) (string, error) {
 	return ClangClTarget(out)
 }
 
-// DartAnalyzerVersionTarget returns the dartanalyzer's version and target from
+// DartAnalyzerVersion returns the dartanalyzer's version from
 // output of `dartanalyzer --version`
-func DartAnalyzerVersionTarget(out []byte) (string, string, error) {
+func DartAnalyzerVersion(out []byte) (string, error) {
 	// output should be like
 	// `dartanalyzer version 2.1.1-dev.1.0`.
 	const dartanalyzerPrefix = "dartanalyzer version "
 	output := strings.TrimSpace(string(out))
 	if !strings.HasPrefix(output, dartanalyzerPrefix) {
-		return "", "", fmt.Errorf("failed to parse dartanalyzer version: %q", output)
+		return "", fmt.Errorf("failed to parse dartanalyzer version: %q", output)
 	}
-	// dartanalyzer does not have a target. Always return linux here.
-	return output[len(dartanalyzerPrefix):], "x86_64-unknown-linux-gnu", nil
+	return output[len(dartanalyzerPrefix):], nil
 }
 
-func dartAnalyzerVersionTarget(cmd string, runner Runner) (string, string, error) {
+func dartAnalyzerVersion(cmd string, runner Runner) (string, error) {
 	out, err := runner(cmd, "--version")
 	if err != nil {
-		return "", "", fmt.Errorf("failed to take dartanalyzer version and target: %v", err)
+		return "", fmt.Errorf("failed to take dartanalyzer version: %v", err)
 	}
-	return DartAnalyzerVersionTarget(out)
+	return DartAnalyzerVersion(out)
 }

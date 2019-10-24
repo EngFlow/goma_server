@@ -176,17 +176,18 @@ var errOutOfRoot = errors.New("out of root")
 
 // rootRel returns relative path from rootDir for fname,
 // which is relative path from cwd, or absolute path.
+// cwd and rootDir should be clean path.
 func rootRel(filepath clientFilePath, fname, cwd, rootDir string) (string, error) {
 	if filepath == nil {
 		return "", errors.New("rootRel: client filepath unknown")
 	}
 	if !filepath.IsAbs(fname) {
-		fname = filepath.Join(filepath.Clean(cwd), fname)
+		fname = filepath.Join(cwd, fname)
 	}
 	// filepath.Rel cleans paths, so we can't use it here.
 	// suppose rootdir and cwd are clean path, and
 	// cwd is under rootdir.
-	rootElems := filepath.SplitElem(filepath.Clean(rootDir))
+	rootElems := filepath.SplitElem(rootDir)
 	fileElems := filepath.SplitElem(fname)
 
 	if len(fileElems) < len(rootElems) {

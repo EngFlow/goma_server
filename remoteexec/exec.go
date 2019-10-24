@@ -236,86 +236,28 @@ func changeSymlinkAbsToRel(e merkletree.Entry) (merkletree.Entry, error) {
 	return e, nil
 }
 
-// newInputTree constructs input tree from req.
-// it returns non-nil ExecResp for:
-// - missing inputs
-// - input root detection failed
-func (r *request) newInputTree(ctx context.Context) *gomapb.ExecResp {
-	if r.err != nil {
-		return nil
-	}
-	ctx, span := trace.StartSpan(ctx, "go.chromium.org/goma/server/remoteexec.request.newInputTree")
-	defer span.End()
+type inputFileResult struct {
+	index         int
+	missingInput  string
+	missingReason string
+	file          merkletree.Entry
+	uploaded      bool
+	err           error
+}
+
+type gomaInputInterface interface {
+	toDigest(context.Context, *gomapb.ExecReq_Input) (digest.Data, error)
+	upload(context.Context, *gomapb.FileBlob) (string, error)
+}
+
+func inputFiles(ctx context.Context, inputs []*gomapb.ExecReq_Input, gi gomaInputInterface, rootRel func(string) (string, error), executableInputs map[string]bool, sema chan struct{}) ([]inputFileResult, error) {
 	logger := log.FromContext(ctx)
-
-	inputPaths, err := inputPaths(r.filepath, r.gomaReq, r.cmdFiles[0].Path)
-	if err != nil {
-		logger.Errorf("bad input: %v", err)
-		r.gomaResp.Error = gomapb.ExecResp_BAD_REQUEST.Enum()
-		r.gomaResp.ErrorMessage = append(r.gomaResp.ErrorMessage, fmt.Sprintf("bad input: %v", err))
-		return r.gomaResp
-	}
-	rootDir, needChroot, err := inputRootDir(r.filepath, inputPaths, r.allowChroot)
-	if err != nil {
-		logger.Errorf("input root detection failed: %v", err)
-		logFileList(logger, "input paths", inputPaths)
-		r.gomaResp.Error = gomapb.ExecResp_BAD_REQUEST.Enum()
-		r.gomaResp.ErrorMessage = append(r.gomaResp.ErrorMessage, fmt.Sprintf("input root detection failed: %v", err))
-		return r.gomaResp
-	}
-	r.tree = merkletree.New(r.filepath, rootDir, r.digestStore)
-	r.needChroot = needChroot
-
-	logger.Infof("new input tree cwd:%s root:%s %s", r.gomaReq.GetCwd(), r.tree.RootDir(), r.cmdConfig.GetCmdDescriptor().GetSetup().GetPathType())
-	gi := gomaInput{
-		gomaFile:    r.f.GomaFile,
-		digestCache: r.f.DigestCache,
-	}
-
-	// If toolchain_included is true, r.gomaReq.Input and cmdFiles will contain the same files.
-	// To avoid dup, if it's added in r.gomaReq.Input, we don't add it as cmdFiles.
-	// While processing r.gomaReq.Input, we handle missing input, so the main routine is in
-	// r.gomaReq.Input.
-
-	// path from cwd -> is_executable. Don't confuse "path from cwd" and "path from input root".
-	// Everything (except symlink) in ToolchainSpec should be in r.gomaReq.Input.
-	// If not and it's necessary to execute, a runtime error (while compile) can happen.
-	// e.g. *.so is missing etc.
-	toolchainInputs := make(map[string]bool)
-	executableInputs := make(map[string]bool)
-	if r.gomaReq.GetToolchainIncluded() {
-		for _, ts := range r.gomaReq.ToolchainSpecs {
-			if ts.GetSymlinkPath() != "" {
-				// If toolchain is a symlink, it is not included in r.gomaReq.Input.
-				// So, toolchainInputs should not contain it.
-				continue
-			}
-			toolchainInputs[ts.GetPath()] = true
-			if ts.GetIsExecutable() {
-				executableInputs[ts.GetPath()] = true
-			}
-		}
-	}
-
 	var wg sync.WaitGroup
-	concurrent := r.f.FileLookupConcurrency
-	if concurrent == 0 {
-		concurrent = 1
-	}
-	sema := make(chan struct{}, concurrent)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	type inputFileResult struct {
-		index         int
-		missingInput  string
-		missingReason string
-		file          merkletree.Entry
-		uploaded      bool
-		err           error
-	}
-	resultCh := make(chan inputFileResult)
-	for i, input := range r.gomaReq.Input {
+	resultCh := make(chan inputFileResult, len(inputs))
+	for i, input := range inputs {
 		wg.Add(1)
 		go func(index int, input *gomapb.ExecReq_Input) {
 			defer wg.Done()
@@ -339,7 +281,7 @@ func (r *request) newInputTree(ctx context.Context) *gomapb.ExecResp {
 				}
 			}
 
-			fname, err := rootRel(r.filepath, input.GetFilename(), r.gomaReq.GetCwd(), r.tree.RootDir())
+			fname, err := rootRel(input.GetFilename())
 			if err != nil {
 				if err == errOutOfRoot {
 					logger.Warnf("filename %s: %v", input.GetFilename(), err)
@@ -406,14 +348,91 @@ func (r *request) newInputTree(ctx context.Context) *gomapb.ExecResp {
 	var results []inputFileResult
 	for result := range resultCh {
 		if result.err != nil {
-			r.err = result.err
-			return nil
+			return nil, result.err
 		}
 		results = append(results, result)
 	}
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].index < results[j].index
 	})
+	return results, nil
+}
+
+// newInputTree constructs input tree from req.
+// it returns non-nil ExecResp for:
+// - missing inputs
+// - input root detection failed
+func (r *request) newInputTree(ctx context.Context) *gomapb.ExecResp {
+	if r.err != nil {
+		return nil
+	}
+	ctx, span := trace.StartSpan(ctx, "go.chromium.org/goma/server/remoteexec.request.newInputTree")
+	defer span.End()
+	logger := log.FromContext(ctx)
+
+	inputPaths, err := inputPaths(r.filepath, r.gomaReq, r.cmdFiles[0].Path)
+	if err != nil {
+		logger.Errorf("bad input: %v", err)
+		r.gomaResp.Error = gomapb.ExecResp_BAD_REQUEST.Enum()
+		r.gomaResp.ErrorMessage = append(r.gomaResp.ErrorMessage, fmt.Sprintf("bad input: %v", err))
+		return r.gomaResp
+	}
+	rootDir, needChroot, err := inputRootDir(r.filepath, inputPaths, r.allowChroot)
+	if err != nil {
+		logger.Errorf("input root detection failed: %v", err)
+		logFileList(logger, "input paths", inputPaths)
+		r.gomaResp.Error = gomapb.ExecResp_BAD_REQUEST.Enum()
+		r.gomaResp.ErrorMessage = append(r.gomaResp.ErrorMessage, fmt.Sprintf("input root detection failed: %v", err))
+		return r.gomaResp
+	}
+	r.tree = merkletree.New(r.filepath, rootDir, r.digestStore)
+	r.needChroot = needChroot
+
+	logger.Infof("new input tree cwd:%s root:%s %s", r.gomaReq.GetCwd(), r.tree.RootDir(), r.cmdConfig.GetCmdDescriptor().GetSetup().GetPathType())
+	// If toolchain_included is true, r.gomaReq.Input and cmdFiles will contain the same files.
+	// To avoid dup, if it's added in r.gomaReq.Input, we don't add it as cmdFiles.
+	// While processing r.gomaReq.Input, we handle missing input, so the main routine is in
+	// r.gomaReq.Input.
+
+	// path from cwd -> is_executable. Don't confuse "path from cwd" and "path from input root".
+	// Everything (except symlink) in ToolchainSpec should be in r.gomaReq.Input.
+	// If not and it's necessary to execute, a runtime error (while compile) can happen.
+	// e.g. *.so is missing etc.
+	toolchainInputs := make(map[string]bool)
+	executableInputs := make(map[string]bool)
+	if r.gomaReq.GetToolchainIncluded() {
+		for _, ts := range r.gomaReq.ToolchainSpecs {
+			if ts.GetSymlinkPath() != "" {
+				// If toolchain is a symlink, it is not included in r.gomaReq.Input.
+				// So, toolchainInputs should not contain it.
+				continue
+			}
+			toolchainInputs[ts.GetPath()] = true
+			if ts.GetIsExecutable() {
+				executableInputs[ts.GetPath()] = true
+			}
+		}
+	}
+
+	cleanCWD := r.filepath.Clean(r.gomaReq.GetCwd())
+	cleanRootDir := r.filepath.Clean(r.tree.RootDir())
+
+	concurrent := r.f.FileLookupConcurrency
+	if concurrent == 0 {
+		concurrent = 1
+	}
+	sema := make(chan struct{}, concurrent)
+
+	results, err := inputFiles(ctx, r.gomaReq.Input, gomaInput{
+		gomaFile:    r.f.GomaFile,
+		digestCache: r.f.DigestCache,
+	}, func(filename string) (string, error) {
+		return rootRel(r.filepath, filename, cleanCWD, cleanRootDir)
+	}, executableInputs, sema)
+	if err != nil {
+		r.err = err
+		return nil
+	}
 
 	var uploaded int
 	var files []merkletree.Entry
@@ -467,7 +486,7 @@ func (r *request) newInputTree(ctx context.Context) *gomapb.ExecResp {
 				return nil
 			}
 		}
-		fname, err := rootRel(r.filepath, e.Name, r.gomaReq.GetCwd(), r.tree.RootDir())
+		fname, err := rootRel(r.filepath, e.Name, cleanCWD, cleanRootDir)
 		if err != nil {
 			if err == errOutOfRoot {
 				continue
@@ -484,7 +503,7 @@ func (r *request) newInputTree(ctx context.Context) *gomapb.ExecResp {
 			return
 		}
 		for _, d := range dirs {
-			rel, err := rootRel(r.filepath, d, r.gomaReq.GetCwd(), r.tree.RootDir())
+			rel, err := rootRel(r.filepath, d, cleanCWD, cleanRootDir)
 			if err != nil {
 				if err == errOutOfRoot {
 					logger.Warnf("%s %s: %v", name, d, err)
@@ -621,7 +640,9 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 	logger := log.FromContext(ctx)
 
 	cwd := r.gomaReq.GetCwd()
-	wd, err := rootRel(r.filepath, cwd, cwd, r.tree.RootDir())
+	cleanCWD := r.filepath.Clean(cwd)
+	cleanRootDir := r.filepath.Clean(r.tree.RootDir())
+	wd, err := rootRel(r.filepath, cwd, cleanCWD, cleanRootDir)
 	if err != nil {
 		return fmt.Errorf("bad cwd=%s: %v", cwd, err)
 	}
@@ -726,7 +747,7 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 	// `wrapperPath` in `r.args` later.
 	wrapperPath := ""
 	for i, w := range files {
-		wp, err := rootRel(r.filepath, w.name, r.gomaReq.GetCwd(), r.tree.RootDir())
+		wp, err := rootRel(r.filepath, w.name, cleanCWD, cleanRootDir)
 		if err != nil {
 			return err
 		}
@@ -880,9 +901,11 @@ func (r *request) newCommand(ctx context.Context) (*rpb.Command, error) {
 	}
 
 	logger.Debugf("setup for outputs: %v", r.outputs)
+	cleanCWD := r.filepath.Clean(r.gomaReq.GetCwd())
+	cleanRootDir := r.filepath.Clean(r.tree.RootDir())
 	// set output files from command line flags.
 	for _, output := range r.outputs {
-		rel, err := rootRel(r.filepath, output, r.gomaReq.GetCwd(), r.tree.RootDir())
+		rel, err := rootRel(r.filepath, output, cleanCWD, cleanRootDir)
 		if err != nil {
 			return nil, fmt.Errorf("output %s: %v", output, err)
 		}
@@ -893,7 +916,7 @@ func (r *request) newCommand(ctx context.Context) (*rpb.Command, error) {
 	logger.Debugf("setup for output dirs: %v", r.outputDirs)
 	// set output dirs from command line flags.
 	for _, output := range r.outputDirs {
-		rel, err := rootRel(r.filepath, output, r.gomaReq.GetCwd(), r.tree.RootDir())
+		rel, err := rootRel(r.filepath, output, cleanCWD, cleanRootDir)
 		if err != nil {
 			return nil, fmt.Errorf("output dir %s: %v", output, err)
 		}
@@ -940,7 +963,7 @@ func (r *request) missingBlobs(ctx context.Context) []*rpb.Digest {
 	err := rpc.Retry{}.Do(ctx, func() error {
 		var err error
 		blobs, err = r.cas.Missing(ctx, r.instanceName(), r.digestStore.List())
-		return err
+		return fixRBEInternalError(err)
 	})
 	if err != nil {
 		r.err = err

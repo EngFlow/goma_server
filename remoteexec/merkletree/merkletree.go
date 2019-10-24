@@ -10,8 +10,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/golang/protobuf/proto"
 
@@ -106,6 +106,13 @@ func (m *MerkleTree) Set(entry Entry) error {
 	if m.filepath.IsAbs(fname) {
 		return ErrAbsPath
 	}
+	if entry.Data == nil && entry.Target == "" {
+		// entry is dir
+		if _, exists := m.m[fname]; exists {
+			// dir already exists
+			return nil
+		}
+	}
 	elems := m.filepath.SplitElem(fname)
 	if len(elems) == 0 {
 		if entry.Data != nil {
@@ -169,8 +176,20 @@ func (m *MerkleTree) Set(entry Entry) error {
 	}
 }
 
+func pathJoin(dir, base string) string {
+	var b strings.Builder
+	if dir == "." || dir == "" {
+		return base
+	}
+	b.Grow(len(dir) + 1 + len(base))
+	b.WriteString(dir)
+	b.WriteByte('/')
+	b.WriteString(base)
+	return b.String()
+}
+
 func (m *MerkleTree) setDir(cur dirstate, name string) dirstate {
-	dirname := filepath.Join(cur.name, name)
+	dirname := pathJoin(cur.name, name)
 	dir, exists := m.m[dirname]
 	if !exists {
 		dirnode := &rpb.DirectoryNode{
@@ -252,7 +271,7 @@ func (m *MerkleTree) buildTree(ctx context.Context, curdir *rpb.Directory, dirna
 
 	var dirs []*rpb.DirectoryNode
 	for _, subdir := range curdir.Directories {
-		dirname := filepath.Join(dirname, subdir.Name)
+		dirname := pathJoin(dirname, subdir.Name)
 		dir, found := m.m[dirname]
 		if !found {
 			return nil, fmt.Errorf("directory not found: %s", dirname)

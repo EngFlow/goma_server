@@ -47,7 +47,8 @@ func (g gomaOutput) stdoutData(ctx context.Context, eresp *rpb.ExecuteResponse) 
 	}
 	var buf bytes.Buffer
 	err := rpc.Retry{}.Do(ctx, func() error {
-		return cas.DownloadDigest(ctx, g.bs, &buf, g.instance, eresp.Result.StdoutDigest)
+		err := cas.DownloadDigest(ctx, g.bs, &buf, g.instance, eresp.Result.StdoutDigest)
+		return fixRBEInternalError(err)
 	})
 	if err != nil {
 		logger := log.FromContext(ctx)
@@ -68,7 +69,8 @@ func (g gomaOutput) stderrData(ctx context.Context, eresp *rpb.ExecuteResponse) 
 	}
 	var buf bytes.Buffer
 	err := rpc.Retry{}.Do(ctx, func() error {
-		return cas.DownloadDigest(ctx, g.bs, &buf, g.instance, eresp.Result.StderrDigest)
+		err := cas.DownloadDigest(ctx, g.bs, &buf, g.instance, eresp.Result.StderrDigest)
+		return fixRBEInternalError(err)
 	})
 	if err != nil {
 		logger := log.FromContext(ctx)
@@ -84,7 +86,7 @@ func (g gomaOutput) outputFile(ctx context.Context, fname string, output *rpb.Ou
 	err := rpc.Retry{}.Do(ctx, func() error {
 		var err error
 		blob, err = g.toFileBlob(ctx, output)
-		return err
+		return fixRBEInternalError(err)
 	})
 	if err != nil {
 		logger := log.FromContext(ctx)
@@ -211,7 +213,8 @@ func (g gomaOutput) outputDirectory(ctx context.Context, filepath clientFilePath
 	}
 	var buf bytes.Buffer
 	err := rpc.Retry{}.Do(ctx, func() error {
-		return cas.DownloadDigest(ctx, g.bs, &buf, g.instance, output.TreeDigest)
+		err := cas.DownloadDigest(ctx, g.bs, &buf, g.instance, output.TreeDigest)
+		return fixRBEInternalError(err)
 	})
 	if err != nil {
 		logger.Errorf("failed to download tree %s: %v", dname, err)

@@ -396,6 +396,9 @@ func main() {
 						{
 							Name:  "container-image",
 							Value: *platformContainerImage,
+						}, {
+							Name:  "OSFamily",
+							Value: "Linux",
 						},
 					},
 				},

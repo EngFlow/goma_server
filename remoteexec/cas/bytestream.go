@@ -10,6 +10,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	rpb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
@@ -25,6 +26,18 @@ import (
 
 // The current maximum data chunk size for both Read() and Write() is 2MB.
 const maxChunkSizeBytes = 2 * 1024 * 1024
+
+var bufPool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, maxChunkSizeBytes)
+	},
+}
+
+func ioCopyBuffer(wr io.Writer, rd io.Reader) (int64, error) {
+	buf := bufPool.Get().([]byte)
+	defer bufPool.Put(buf)
+	return io.CopyBuffer(wr, rd, buf)
+}
 
 // ParseResName parses resource name; digest string formatted as "blobs/<hash>/<sizebytes>".
 // It ignores prior to "blobs", and after <sizebytes>.
@@ -82,8 +95,7 @@ func Upload(ctx context.Context, bs bpb.ByteStreamClient, resname string, size i
 		return status.Errorf(s.Code(), "upload write %s: %v", resname, s.Message())
 	}
 	t0 := time.Now()
-	buf := make([]byte, maxChunkSizeBytes)
-	written, err := io.CopyBuffer(wr, rd, buf)
+	written, err := ioCopyBuffer(wr, rd)
 	if err != nil {
 		wr.Close()
 		logger.Warnf("upload failed %s %d in %s: %v", resname, written, time.Since(t0), err)
@@ -131,8 +143,7 @@ func Download(ctx context.Context, bs bpb.ByteStreamClient, wr io.Writer, resnam
 		s := status.Convert(err)
 		return 0, status.Errorf(s.Code(), "download read: %s: %v", resname, s.Message())
 	}
-	buf := make([]byte, maxChunkSizeBytes)
-	written, err := io.CopyBuffer(wr, rd, buf)
+	written, err := ioCopyBuffer(wr, rd)
 	if err != nil {
 		logger.Warnf("download failed %s %d in %s: %v", resname, written, time.Since(t), err)
 		s := status.Convert(err)

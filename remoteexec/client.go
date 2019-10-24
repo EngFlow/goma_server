@@ -253,12 +253,15 @@ func erespErr(ctx context.Context, eresp *rpb.ExecuteResponse) error {
 	//   Due to transient condition, such as all workers being
 	//   occupied (and the server does not support a queue), the
 	//   action could not be started. The client should retry.
+	// INTERNAL
+	//   An internal error occurred in the execution engine or the worker.
+	//   could be handled as unavailable error.
 	//
 	// Other error would be non retriable.
 	switch codes.Code(st.GetCode()) {
 	case codes.OK:
-	case codes.FailedPrecondition:
-		logger.Warnf("execute response: failed precondition: %s", st)
+	case codes.FailedPrecondition, codes.Internal:
+		logger.Warnf("execute response: status=%s", st)
 		fallthrough
 	case codes.Unavailable:
 		st = proto.Clone(st).(*spb.Status)
@@ -282,4 +285,11 @@ func erespErr(ctx context.Context, eresp *rpb.ExecuteResponse) error {
 		logger.Errorf("execute response: error %s", st)
 	}
 	return nil
+}
+
+func fixRBEInternalError(err error) error {
+	if status.Code(err) == codes.Internal {
+		return status.Errorf(codes.Unavailable, "%v", err)
+	}
+	return err
 }

@@ -38,7 +38,6 @@ func mustGRPCLogger() *zap.Logger {
 	if vl, err := strconv.Atoi(vLevel); err == nil {
 		gRPCVerboseLevel = vl
 	}
-	FromContext(context.Background()).Infof("grpc log level = %s verbosity = %d", gRPCLevel, gRPCVerboseLevel)
 
 	zapCfg := zapConfig()
 	zapCfg.Level = zap.NewAtomicLevelAt(gRPCLevel)

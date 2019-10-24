@@ -277,3 +277,33 @@ func TestSplitElem(t *testing.T) {
 		}
 	}
 }
+
+func BenchmarkCleanAlreadyClean(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		Clean("../abc/def/ghi")
+	}
+}
+
+func BenchmarkCleanAlreadyCleanAbs(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		Clean("/abc/def/ghi")
+	}
+}
+
+func BenchmarkCleanParentDir(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		Clean("abc/def/ghi/../jkl")
+	}
+}
+
+func BenchmarkCleanParentDirAbs(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		Clean("/abc/def/ghi/../jkl")
+	}
+}
+
+func BenchmarkJoin(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		Join("/b", "s", "w", "ir", "cache", "builder", "src", "out", "Release", "gen", "ipc", "ipc_buildflags.h")
+	}
+}

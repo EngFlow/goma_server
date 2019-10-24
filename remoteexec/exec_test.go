@@ -5,11 +5,17 @@
 package remoteexec
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/golang/protobuf/proto"
 
+	"go.chromium.org/goma/server/hash"
+	"go.chromium.org/goma/server/log"
 	gomapb "go.chromium.org/goma/server/proto/api"
+	"go.chromium.org/goma/server/remoteexec/digest"
 	"go.chromium.org/goma/server/remoteexec/merkletree"
 )
 
@@ -109,5 +115,87 @@ func TestChangeSymlinkAbsToRel(t *testing.T) {
 				t.Errorf("changeSymlinkAbsToRel(%v) = %v; want %v", e, actual, expected)
 			}
 		})
+	}
+}
+
+type fakeGomaInput struct {
+	digests map[*gomapb.ExecReq_Input]digest.Data
+	hashes  map[*gomapb.FileBlob]string
+}
+
+func (f *fakeGomaInput) setInputs(inputs []*gomapb.ExecReq_Input) {
+	if f.digests == nil {
+		f.digests = make(map[*gomapb.ExecReq_Input]digest.Data)
+	}
+	if f.hashes == nil {
+		f.hashes = make(map[*gomapb.FileBlob]string)
+	}
+	for _, input := range inputs {
+		f.digests[input] = digest.Bytes(input.GetFilename(), input.Content.Content)
+		f.hashes[input.Content] = input.GetHashKey()
+	}
+}
+
+func (f *fakeGomaInput) toDigest(ctx context.Context, in *gomapb.ExecReq_Input) (digest.Data, error) {
+	d, ok := f.digests[in]
+	if !ok {
+		return nil, errors.New("not found")
+	}
+	return d, nil
+}
+
+func (f *fakeGomaInput) upload(ctx context.Context, blob *gomapb.FileBlob) (string, error) {
+	h, ok := f.hashes[blob]
+	if !ok {
+		return "", errors.New("upload error")
+	}
+	return h, nil
+}
+
+type nopLogger struct{}
+
+func (nopLogger) Debug(args ...interface{})                {}
+func (nopLogger) Debugf(format string, arg ...interface{}) {}
+func (nopLogger) Info(args ...interface{})                 {}
+func (nopLogger) Infof(format string, arg ...interface{})  {}
+func (nopLogger) Warn(args ...interface{})                 {}
+func (nopLogger) Warnf(format string, arg ...interface{})  {}
+func (nopLogger) Error(args ...interface{})                {}
+func (nopLogger) Errorf(format string, arg ...interface{}) {}
+func (nopLogger) Fatal(args ...interface{})                {}
+func (nopLogger) Fatalf(format string, arg ...interface{}) {}
+func (nopLogger) Sync() error                              { return nil }
+
+func BenchmarkInputFiles(b *testing.B) {
+	var inputs []*gomapb.ExecReq_Input
+	for i := 0; i < 1000; i++ {
+		content := fmt.Sprintf("content %d", i)
+		blob := &gomapb.FileBlob{
+			BlobType: gomapb.FileBlob_FILE.Enum(),
+			Content:  []byte(content),
+			FileSize: proto.Int64(int64(len(content))),
+		}
+		hashkey, err := hash.SHA256Proto(blob)
+		if err != nil {
+			b.Fatal(err)
+		}
+		inputs = append(inputs, &gomapb.ExecReq_Input{
+			HashKey:  proto.String(hashkey),
+			Filename: proto.String(fmt.Sprintf("input_%d", i)),
+			Content:  blob,
+		})
+	}
+	gi := &fakeGomaInput{}
+	gi.setInputs(inputs)
+	rootRel := func(filename string) (string, error) { return filename, nil }
+	executableInputs := map[string]bool{}
+	sema := make(chan struct{}, 5)
+	ctx := log.NewContext(context.Background(), nopLogger{})
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := inputFiles(ctx, inputs, gi, rootRel, executableInputs, sema)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }

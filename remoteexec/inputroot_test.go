@@ -352,7 +352,8 @@ func TestRootRel(t *testing.T) {
 			wantErr: true,
 		},
 	} {
-		got, err := rootRel(posixpath.FilePath{}, tc.fname, tc.cwd, tc.rootDir)
+		var filepath posixpath.FilePath
+		got, err := rootRel(filepath, tc.fname, filepath.Clean(tc.cwd), filepath.Clean(tc.rootDir))
 		if tc.wantErr {
 			if err == nil {
 				t.Errorf("rootRel(posixpath.FilePath, %q, %q, %q)=%v, nil; want error", tc.fname, tc.cwd, tc.rootDir, got)
@@ -362,6 +363,12 @@ func TestRootRel(t *testing.T) {
 		if err != nil || got != tc.want {
 			t.Errorf("rootRel(posixpath.FilePath, %q, %q, %q)=%q, %v; want %q, nil", tc.fname, tc.cwd, tc.rootDir, got, err, tc.want)
 		}
+	}
+}
+
+func BenchmarkRootRel(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		rootRel(posixpath.FilePath{}, "../../base/foo.cc", "/home/foo/src/chromium/src/out/Release", "/home/foo/src/chromium/src")
 	}
 }
 

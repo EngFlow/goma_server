@@ -68,7 +68,7 @@ func Join(elem ...string) string {
 	if len(elem) == 0 {
 		return ""
 	}
-	var paths []string
+	paths := make([]string, 0, len(elem))
 	for _, e := range elem {
 		if e == "" {
 			continue
@@ -145,13 +145,14 @@ func SplitElem(fname string) []string {
 	if fname == "" {
 		return nil
 	}
-	if strings.Repeat("/", len(fname)) == fname {
-		return []string{"/"}
-	}
 	if fname == "." {
 		return []string{"."}
 	}
-	var elem []string
+	ns := strings.Count(fname, "/")
+	if ns == len(fname) {
+		return []string{"/"}
+	}
+	elem := make([]string, 0, ns+1)
 	if strings.HasPrefix(fname, "/") {
 		elem = append(elem, "/")
 	}
@@ -184,7 +185,7 @@ func cleanElem(elem []string) []string {
 	if len(elem) > 0 && elem[len(elem)-1] == "." {
 		elem = elem[:len(elem)-1]
 	}
-	var r []string
+	r := make([]string, 0, len(elem))
 	for _, e := range elem {
 		if e == ".." {
 			if len(r) == 1 && r[0] == "/" {

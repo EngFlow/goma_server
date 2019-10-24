@@ -42,7 +42,6 @@ func (s *Service) StoreFile(ctx context.Context, req *gomapb.StoreFileReq) (*gom
 	span.AddAttributes(trace.Int64Attribute("store_num", int64(len(req.GetBlob()))))
 
 	logger := log.FromContext(ctx)
-	logger.Debugf("requester %v", req.GetRequesterInfo())
 	start := time.Now()
 
 	resp := &gomapb.StoreFileResp{
@@ -102,13 +101,11 @@ func (s *Service) StoreFile(ctx context.Context, req *gomapb.StoreFileReq) (*gom
 			return nil
 		})
 	}
-	logger.Debugf("waiting store %d blobs", len(req.GetBlob()))
 	err := errg.Wait()
 	if err != nil {
-		logger.Warnf("store %d blobs %s: %v", len(req.GetBlob()), time.Since(start), err)
+		logger.Warnf("%s store %d blobs %s: %v", req.GetRequesterInfo(), len(req.GetBlob()), time.Since(start), err)
 		return nil, err
 	}
-	logger.Debugf("store %d blobs %s", len(req.GetBlob()), time.Since(start))
 	return resp, nil
 }
 

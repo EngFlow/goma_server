@@ -15,6 +15,7 @@ import (
 	bpb "google.golang.org/genproto/googleapis/bytestream"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"go.chromium.org/goma/server/log"
 	"go.chromium.org/goma/server/remoteexec/datasource"
@@ -165,7 +166,7 @@ Loop:
 		err := rpc.Retry{}.Do(ctx, func() error {
 			var err error
 			batchResp, err = c.Client.CAS().BatchUpdateBlobs(ctx, batchReq)
-			return err
+			return fixRBEInternalError(err)
 		})
 		if err != nil {
 			if grpc.Code(err) == codes.ResourceExhausted {
@@ -198,24 +199,38 @@ Loop:
 			})
 			continue
 		}
-		rd, err := data.Open(ctx)
+		err := rpc.Retry{}.Do(ctx, func() error {
+			rd, err := data.Open(ctx)
+			if err != nil {
+				span.Annotatef(nil, "upload open %v: %v", blobs[i], err)
+				missing.Blobs = append(missing.Blobs, MissingBlob{
+					Digest: blobs[i],
+					Err:    err,
+				})
+				return err
+			}
+			err = UploadDigest(ctx, c.Client.ByteStream(), instance, blobs[i], rd)
+			if err != nil {
+				rd.Close()
+				return fixRBEInternalError(err)
+			}
+			rd.Close()
+			return nil
+		})
 		if err != nil {
-			span.Annotatef(nil, "upload open %v: %v", blobs[i], err)
-			missing.Blobs = append(missing.Blobs, MissingBlob{
-				Digest: blobs[i],
-				Err:    err,
-			})
+			logger.Errorf("upload streaming %s error: %v", blobs[i], err)
 			continue
 		}
-		err = UploadDigest(ctx, c.Client.ByteStream(), instance, blobs[i], rd)
-		if err != nil {
-			rd.Close()
-			return err
-		}
-		rd.Close()
 	}
 	if len(missing.Blobs) > 0 {
 		return missing
 	}
 	return nil
+}
+
+func fixRBEInternalError(err error) error {
+	if status.Code(err) == codes.Internal {
+		return status.Errorf(codes.Unavailable, "%v", err)
+	}
+	return err
 }

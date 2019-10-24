@@ -410,13 +410,12 @@ func Handler(name string, req, resp proto.Message, h func(context.Context, proto
 			return
 		}
 
-		n, err := serializeToResponseWriter(ctx, w, resp, acceptEncoding)
+		_, err = serializeToResponseWriter(ctx, w, resp, acceptEncoding)
 
 		if err != nil {
 			logger.Errorf("outgoing serialize error %s: %v", r.URL.Path, err)
 			return
 		}
-		logger.Debugf("server ok %s: %d", r.URL.Path, n)
 	})
 
 	return handler

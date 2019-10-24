@@ -363,3 +363,35 @@ func TestSplitElem(t *testing.T) {
 	}
 
 }
+
+func BenchmarkCleanAlreadyClean(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		Clean("../abc/def/ghi")
+		Clean(`..\abc\def\ghi`)
+	}
+}
+
+func BenchmarkCleanAlreadyCleanAbs(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		Clean("/abc/def/ghi")
+		Clean(`\abc\def\ghi`)
+		Clean("c:/abc/def/ghi")
+		Clean(`c:\abc\def\ghi`)
+	}
+}
+
+func BenchmarkCleanParentDir(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		Clean("abc/def/ghi/../jkl")
+		Clean(`abc\def\ghi\..\jkl`)
+	}
+}
+
+func BenchmarkCleanParentDirAbs(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		Clean("/abc/def/ghi/../jkl")
+		Clean(`\abc\def\ghi\..\jkl`)
+		Clean("c:/abc/def/ghi/../jkl")
+		Clean(`c:\abc\def\ghi\..\jkl`)
+	}
+}

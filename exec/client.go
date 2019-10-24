@@ -10,7 +10,6 @@ import (
 	"go.opencensus.io/trace"
 	"google.golang.org/grpc"
 
-	"go.chromium.org/goma/server/log"
 	gomapb "go.chromium.org/goma/server/proto/api"
 	pb "go.chromium.org/goma/server/proto/exec"
 )
@@ -50,7 +49,6 @@ func NewClient(address string, opts ...grpc.DialOption) Client {
 func (c Client) Exec(ctx context.Context, in *gomapb.ExecReq, opts ...grpc.CallOption) (*gomapb.ExecResp, error) {
 	ctx, span := trace.StartSpan(ctx, "go.chromium.org/goma/server/exec.Client.Exec")
 	defer span.End()
-	logger := log.FromContext(ctx)
 	conn, err := grpc.DialContext(ctx, c.addr,
 		append([]grpc.DialOption{
 			grpc.WithBlock(),
@@ -60,14 +58,11 @@ func (c Client) Exec(ctx context.Context, in *gomapb.ExecReq, opts ...grpc.CallO
 	}
 	defer conn.Close()
 
-	logger.Debug("client:exec.Exec start")
-
 	resp, err := pb.NewExecServiceClient(conn).Exec(ctx, in,
 		append([]grpc.CallOption{
 			grpc.MaxCallSendMsgSize(DefaultMaxReqMsgSize),
 			grpc.MaxCallRecvMsgSize(DefaultMaxRespMsgSize),
 		}, opts...)...)
-	logger.Debug("client:exec.Exec end")
 
 	return resp, err
 }

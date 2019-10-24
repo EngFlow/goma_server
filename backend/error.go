@@ -16,11 +16,10 @@ import (
 )
 
 func wrapError(ctx context.Context, service string, err error) error {
-	logger := log.FromContext(ctx)
 	if err == nil {
-		logger.Debugf("call %s done", service)
 		return nil
 	}
+	logger := log.FromContext(ctx)
 	st, _ := status.FromError(err)
 	code := st.Code()
 	if code == codes.Unknown {

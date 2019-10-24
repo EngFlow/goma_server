@@ -140,7 +140,7 @@ func checkGroup(ctx context.Context, tokenInfo *auth.TokenInfo, g *pb.Group, aut
 		return true
 	}
 	if !match(tokenInfo.Email, g.Emails, g.Domains) {
-		logger.Debugf("mismatch")
+		logger.Debugf("emails/domains mismatch: client email not in group %s", g.Id)
 		return false
 	}
 	return true

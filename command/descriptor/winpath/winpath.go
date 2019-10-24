@@ -16,7 +16,6 @@ import (
 
 var (
 	absPathPattern = regexp.MustCompile(`^[A-Za-z]:[/\\].*`)
-	drivePattern   = regexp.MustCompile(`^([A-Za-z]:)(.*)`)
 )
 
 // FilePath provides win filepath.
@@ -47,13 +46,13 @@ func Base(fname string) string {
 	if fname == "" {
 		return "."
 	}
-	fname = strings.Replace(fname, `\`, "/", -1)
+	fname = fixPathSep(fname, '\\', '/')
 	_, path := splitDrive(fname)
 	if path == "" {
 		return "."
 	}
 	base := posixpath.Base(path)
-	return strings.Replace(base, "/", `\`, -1)
+	return fixPathSep(base, '/', '\\')
 }
 
 // Dir returns all but the last element of path, typically the path's
@@ -63,13 +62,13 @@ func Dir(fname string) string {
 	if fname == "" {
 		return "."
 	}
-	fname = strings.Replace(fname, `\`, "/", -1)
+	fname = fixPathSep(fname, '\\', '/')
 	drive, path := splitDrive(fname)
 	if path == "" {
 		return drive
 	}
 	dirname := posixpath.Dir(path)
-	return drive + strings.Replace(dirname, "/", `\`, -1)
+	return drive + fixPathSep(dirname, '/', '\\')
 }
 
 // Join joins any number of path elements into a single path, adding a "/"
@@ -82,12 +81,12 @@ func Join(elem ...string) string {
 	// copy
 	elem = append([]string{}, elem...)
 	for i := range elem {
-		elem[i] = strings.Replace(elem[i], `\`, "/", -1)
+		elem[i] = fixPathSep(elem[i], '\\', '/')
 	}
 	var drive string
 	drive, elem[0] = splitDrive(elem[0])
 	path := posixpath.Join(elem...)
-	return drive + strings.Replace(path, "/", `\`, -1)
+	return drive + fixPathSep(path, '/', '\\')
 }
 
 // Rel returns a relative path that is lexically equivalent to targpath when
@@ -102,22 +101,22 @@ func Rel(basepath, targpath string) (string, error) {
 	if bdrive != tdrive {
 		return "", fmt.Errorf("Rel: can't make %s relative to %s", targpath, basepath)
 	}
-	bpath = strings.Replace(bpath, `\`, "/", -1)
-	tpath = strings.Replace(tpath, `\`, "/", -1)
+	bpath = fixPathSep(bpath, '\\', '/')
+	tpath = fixPathSep(tpath, '\\', '/')
 	rpath, err := posixpath.Rel(bpath, tpath)
 	if err != nil {
 		return "", err
 	}
-	return strings.Replace(rpath, "/", `\`, -1), nil
+	return fixPathSep(rpath, '/', '\\'), nil
 }
 
 // Clean returns the shortest path name equivalent to path by purely lexical processing.
 func Clean(path string) string {
 	drive, path := splitDrive(path)
-	path = strings.Replace(path, `\`, "/", -1)
+	path = fixPathSep(path, '\\', '/')
 	path = posixpath.Clean(path)
 
-	return drive + strings.Replace(path, "/", `\`, -1)
+	return drive + fixPathSep(path, '/', '\\')
 }
 
 // SplitElem splits path into element, separated by `\` or "/".
@@ -127,7 +126,7 @@ func Clean(path string) string {
 // Empty string, "/", `\` or "." won't be appeared in other elements.
 func SplitElem(fname string) []string {
 	drive, path := splitDrive(fname)
-	path = strings.Replace(path, `\`, "/", -1)
+	path = fixPathSep(path, '\\', '/')
 	elems := posixpath.SplitElem(path)
 	if len(elems) > 0 && elems[0] == "/" {
 		elems[0] = drive + `\`
@@ -137,10 +136,45 @@ func SplitElem(fname string) []string {
 	return elems
 }
 
-func splitDrive(fname string) (string, string) {
-	m := drivePattern.FindStringSubmatch(fname)
-	if m != nil {
-		return m[1], m[2]
+func fixPathSep(path string, oldSep, newSep byte) string {
+	if !strings.ContainsRune(path, rune(oldSep)) {
+		return path
 	}
-	return "", fname
+	buf := make([]byte, len(path))
+	for i := 0; i < len(path); i++ {
+		b := path[i]
+		if b == oldSep {
+			b = newSep
+		}
+		buf[i] = b
+	}
+	return string(buf)
+}
+
+func isDriveLetter(ch byte) bool {
+	switch {
+	case ch >= 'A' && ch <= 'Z':
+		return true
+	case ch >= 'a' && ch <= 'z':
+		return true
+	default:
+		return false
+	}
+}
+
+func splitDrive(fname string) (string, string) {
+	if len(fname) == 0 {
+		return "", ""
+	}
+	if !isDriveLetter(fname[0]) {
+		return "", fname
+	}
+	if len(fname) < 2 {
+		return "", fname
+	}
+	if fname[1] != ':' {
+		return "", fname
+	}
+	// matches ^([A-Za-z]:)
+	return fname[:2], fname[2:]
 }
