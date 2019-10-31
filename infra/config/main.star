@@ -72,6 +72,7 @@ luci.cq_group(
 luci.builder(
     name = "linux_rel",
     bucket = "try",
+    service_account = "goma-server-try-builder@chops-service-accounts.iam.gserviceaccount.com",
     executable = luci.recipe(
         name = "goma_server",
         cipd_package = "infra/recipe_bundles/chromium.googlesource.com/chromium/tools/build",
