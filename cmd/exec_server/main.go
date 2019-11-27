@@ -30,6 +30,7 @@ import (
 	"go.opencensus.io/stats"
 	"go.opencensus.io/stats/view"
 	"go.opencensus.io/tag"
+	"go.opencensus.io/trace"
 	"go.opencensus.io/zpages"
 	"google.golang.org/api/option"
 	bspb "google.golang.org/genproto/googleapis/bytestream"
@@ -297,6 +298,9 @@ func main() {
 	if err != nil {
 		logger.Fatal(err)
 	}
+	trace.ApplyConfig(trace.Config{
+		DefaultSampler: server.NewRemoteSampler(true, trace.NeverSample()),
+	})
 
 	s, err := server.NewGRPC(*port,
 		grpc.MaxSendMsgSize(exec.DefaultMaxRespMsgSize),

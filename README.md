@@ -53,7 +53,7 @@ for chromium, platform container image should be created with
 
 Example Dockerfile
 ```
-FROM ubuntu:14.04
+FROM ubuntu:16.04
 ENV DEBIAN_FRONTEND noninteractive
 
 ADD https://chromium.googlesource.com/chromium/src/+/master/build/install-build-deps.sh?format=TEXT /tmp/install-build-deps.sh.base64

@@ -13,6 +13,7 @@ import (
 	"flag"
 	"net/http"
 
+	"go.opencensus.io/trace"
 	"go.opencensus.io/zpages"
 	"google.golang.org/grpc"
 
@@ -44,6 +45,9 @@ func main() {
 	if err != nil {
 		logger.Fatal(err)
 	}
+	trace.ApplyConfig(trace.Config{
+		DefaultSampler: server.NewRemoteSampler(true, trace.NeverSample()),
+	})
 
 	s, err := server.NewGRPC(*port,
 		grpc.MaxRecvMsgSize(execlog.DefaultMaxReqMsgSize))

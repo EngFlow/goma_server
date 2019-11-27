@@ -21,6 +21,7 @@ import (
 	"go.opencensus.io/stats"
 	"go.opencensus.io/stats/view"
 	"go.opencensus.io/tag"
+	"go.opencensus.io/trace"
 	"go.opencensus.io/zpages"
 	"golang.org/x/oauth2"
 	"google.golang.org/grpc"
@@ -131,6 +132,9 @@ func main() {
 	if err != nil {
 		logger.Fatal(err)
 	}
+	trace.ApplyConfig(trace.Config{
+		DefaultSampler: server.NewRemoteSampler(true, trace.NeverSample()),
+	})
 
 	s, err := server.NewGRPC(*port)
 	if err != nil {

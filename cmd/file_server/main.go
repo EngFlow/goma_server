@@ -13,6 +13,7 @@ import (
 	"flag"
 
 	"cloud.google.com/go/storage"
+	"go.opencensus.io/trace"
 	k8sapi "golang.org/x/build/kubernetes/api"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc"
@@ -73,6 +74,10 @@ func main() {
 	if err != nil {
 		logger.Fatal(err)
 	}
+
+	trace.ApplyConfig(trace.Config{
+		DefaultSampler: server.NewRemoteSampler(true, trace.NeverSample()),
+	})
 
 	s, err := server.NewGRPC(*port,
 		grpc.MaxSendMsgSize(file.DefaultMaxMsgSize),

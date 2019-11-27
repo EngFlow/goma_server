@@ -63,7 +63,7 @@ var (
 
 	remoteexecAddr         = flag.String("remoteexec-addr", "", "remoteexec API endpoint")
 	remoteInstanceName     = flag.String("remote-instance-name", "", "remote instance name")
-	whitelistedUsers       = flag.String("whitelisted-users", "", "comma separated list of whitelisted user. if empty, current user is allowed.")
+	whitelistedUsers       = flag.String("whitelisted-users", "", "comma separated list of whitelisted user. `*@domain` will match any user in domain. if empty, current user is allowed.")
 	serviceAccountJSON     = flag.String("service-account-json", "", "service account json, used to talk to RBE and cloud storage (if --file-cache-bucket is used)")
 	platformContainerImage = flag.String("platform-container-image", "", "docker uri of platform container image")
 	insecureRemoteexec     = flag.Bool("insecure-remoteexec", false, "insecure grpc for remoteexec API")
@@ -135,7 +135,8 @@ func (c cacheClient) Put(ctx context.Context, req *cachepb.PutReq, opts ...grpc.
 const gomaClientClientID = "687418631491-r6m1c3pr0lth5atp4ie07f03ae8omefc.apps.googleusercontent.com"
 
 type defaultACL struct {
-	whitelistedUser []string
+	whitelistedUser    []string
+	whitelistedDomains []string
 }
 
 func (a defaultACL) Load(ctx context.Context) (*authpb.ACL, error) {
@@ -150,6 +151,7 @@ func (a defaultACL) Load(ctx context.Context) (*authpb.ACL, error) {
 				Id:             "user",
 				Audience:       gomaClientClientID,
 				Emails:         a.whitelistedUser,
+				Domains:        a.whitelistedDomains,
 				ServiceAccount: serviceAccount,
 			},
 		},
@@ -262,10 +264,16 @@ func main() {
 		*whitelistedUsers = myEmail(ctx)
 	}
 	var whitelisted []string
+	var whitelistedDomains []string
 	for _, u := range strings.Split(*whitelistedUsers, ",") {
-		whitelisted = append(whitelisted, strings.TrimSpace(u))
+		u = strings.TrimSpace(u)
+		if strings.HasPrefix(u, "*@") {
+			whitelistedDomains = append(whitelistedDomains, strings.TrimPrefix(u, "*@"))
+		} else {
+			whitelisted = append(whitelisted, u)
+		}
 	}
-	logger.Infof("allow access for %q", whitelisted)
+	logger.Infof("allow access for %q / domains %q", whitelisted, whitelistedDomains)
 
 	err := server.Init(ctx, *traceProjectID, "remoteexec-proxy")
 	if err != nil {
@@ -285,7 +293,8 @@ func main() {
 	}
 	aclCheck := acl.ACL{
 		Loader: defaultACL{
-			whitelistedUser: whitelisted,
+			whitelistedUser:    whitelisted,
+			whitelistedDomains: whitelistedDomains,
 		},
 		Checker: acl.Checker{
 			Pool: account.JSONDir{

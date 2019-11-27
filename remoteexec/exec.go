@@ -237,7 +237,6 @@ func changeSymlinkAbsToRel(e merkletree.Entry) (merkletree.Entry, error) {
 }
 
 type inputFileResult struct {
-	index         int
 	missingInput  string
 	missingReason string
 	file          merkletree.Entry
@@ -250,36 +249,21 @@ type gomaInputInterface interface {
 	upload(context.Context, *gomapb.FileBlob) (string, error)
 }
 
-func inputFiles(ctx context.Context, inputs []*gomapb.ExecReq_Input, gi gomaInputInterface, rootRel func(string) (string, error), executableInputs map[string]bool, sema chan struct{}) ([]inputFileResult, error) {
+func inputFiles(ctx context.Context, inputs []*gomapb.ExecReq_Input, gi gomaInputInterface, rootRel func(string) (string, error), executableInputs map[string]bool, sema chan struct{}) []inputFileResult {
 	logger := log.FromContext(ctx)
 	var wg sync.WaitGroup
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	resultCh := make(chan inputFileResult, len(inputs))
+	results := make([]inputFileResult, len(inputs))
 	for i, input := range inputs {
 		wg.Add(1)
 		go func(index int, input *gomapb.ExecReq_Input) {
 			defer wg.Done()
-			select {
-			case <-ctx.Done():
-				logger.Warnf("ctx.Done index=%d, filename=%s ctx.Err:%v", index, input.GetFilename(), ctx.Err())
-				return
-			case sema <- struct{}{}:
-			}
+			sema <- struct{}{}
 			defer func() {
 				<-sema
 			}()
-
-			sendToResultCh := func(r inputFileResult) error {
-				select {
-				case <-ctx.Done():
-					logger.Warnf("ctx.Done index=%d, filename=%s ctx.Err:%v", index, input.GetFilename(), ctx.Err())
-					return ctx.Err()
-				case resultCh <- r:
-					return nil
-				}
-			}
 
 			fname, err := rootRel(input.GetFilename())
 			if err != nil {
@@ -287,19 +271,18 @@ func inputFiles(ctx context.Context, inputs []*gomapb.ExecReq_Input, gi gomaInpu
 					logger.Warnf("filename %s: %v", input.GetFilename(), err)
 					return
 				}
-				sendToResultCh(inputFileResult{
+				results[index] = inputFileResult{
 					err: fmt.Errorf("input file: %s %v", input.GetFilename(), err),
-				})
+				}
 				return
 			}
 
 			data, err := gi.toDigest(ctx, input)
 			if err != nil {
-				sendToResultCh(inputFileResult{
-					index:         index,
+				results[index] = inputFileResult{
 					missingInput:  input.GetFilename(),
 					missingReason: fmt.Sprintf("input: %v", err),
-				})
+				}
 				return
 			}
 			file := merkletree.Entry{
@@ -311,18 +294,14 @@ func inputFiles(ctx context.Context, inputs []*gomapb.ExecReq_Input, gi gomaInpu
 				IsExecutable: executableInputs[input.GetFilename()],
 			}
 			if input.Content == nil {
-				sendToResultCh(inputFileResult{
-					index: index,
-					file:  file,
-				})
+				results[index] = inputFileResult{
+					file: file,
+				}
 				return
 			}
-			if sendToResultCh(inputFileResult{
-				index:    index,
+			results[index] = inputFileResult{
 				file:     file,
 				uploaded: true,
-			}) != nil {
-				return
 			}
 			var hk string
 			err = rpc.Retry{}.Do(ctx, func() error {
@@ -340,22 +319,8 @@ func inputFiles(ctx context.Context, inputs []*gomapb.ExecReq_Input, gi gomaInpu
 			logger.Infof("embedded input %s %s", input.GetFilename(), hk)
 		}(i, input)
 	}
-	go func() {
-		wg.Wait()
-		close(resultCh)
-	}()
-
-	var results []inputFileResult
-	for result := range resultCh {
-		if result.err != nil {
-			return nil, result.err
-		}
-		results = append(results, result)
-	}
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].index < results[j].index
-	})
-	return results, nil
+	wg.Wait()
+	return results
 }
 
 // newInputTree constructs input tree from req.
@@ -423,15 +388,17 @@ func (r *request) newInputTree(ctx context.Context) *gomapb.ExecResp {
 	}
 	sema := make(chan struct{}, concurrent)
 
-	results, err := inputFiles(ctx, r.gomaReq.Input, gomaInput{
+	results := inputFiles(ctx, r.gomaReq.Input, gomaInput{
 		gomaFile:    r.f.GomaFile,
 		digestCache: r.f.DigestCache,
 	}, func(filename string) (string, error) {
 		return rootRel(r.filepath, filename, cleanCWD, cleanRootDir)
 	}, executableInputs, sema)
-	if err != nil {
-		r.err = err
-		return nil
+	for _, result := range results {
+		if result.err != nil {
+			r.err = result.err
+			return nil
+		}
 	}
 
 	var uploaded int
@@ -602,7 +569,7 @@ image="$(docker inspect --format '{{.Config.Image}}' "$containerid")"
 
 ## get volume source dir for this directory.
 set +e  # docker inspect might fails, depending on client version.
-rundir="$(docker inspect --format '{{range .Mounts}}{{if eq .Source "'"$(pwd)"'"}}{{.Destination}}{{end -}}{{end}}' "$containerid" 2>/dev/null)"
+rundir="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "'"$(pwd)"'"}}{{.Source}}{{end -}}{{end}}' "$containerid" 2>/dev/null)"
 if [[ "$rundir" = "" ]]; then
   # for legacy docker client
   rundir="$(docker inspect --format '{{index .Volumes "'"$(pwd)"'"}}' "$containerid")"
@@ -1172,9 +1139,15 @@ func (r *request) newResp(ctx context.Context, eresp *rpb.ExecuteResponse, cache
 			return r.gomaResp, status.Errorf(codes.Internal, "docker error: %s", string(r.gomaResp.Result.StdoutBuffer))
 		}
 
+		if eresp.Result.ExitCode != 0 {
+			logLLVMError(logger, "stdout", r.gomaResp.Result.StdoutBuffer)
+		}
 		logger.Infof("stdout %s", shortLogMsg(r.gomaResp.Result.StdoutBuffer))
 	}
 	if len(r.gomaResp.Result.StderrBuffer) > 0 {
+		if eresp.Result.ExitCode != 0 {
+			logLLVMError(logger, "stderr", r.gomaResp.Result.StderrBuffer)
+		}
 		logger.Infof("stderr %s", shortLogMsg(r.gomaResp.Result.StderrBuffer))
 	}
 
@@ -1219,4 +1192,28 @@ func shortLogMsg(msg []byte) string {
 	fmt.Fprint(&b, "...")
 	b.Write(msg[len(msg)-512:])
 	return b.String()
+}
+
+// logLLVMError records LLVM ERROR.
+// http://b/145177862
+func logLLVMError(logger log.Logger, id string, msg []byte) {
+	llvmErrorMsg, ok := extractLLVMError(msg)
+	if !ok {
+		return
+	}
+	logger.Errorf("%s: %s", id, llvmErrorMsg)
+}
+
+func extractLLVMError(msg []byte) ([]byte, bool) {
+	const llvmError = "LLVM ERROR:"
+	i := bytes.Index(msg, []byte(llvmError))
+	if i < 0 {
+		return nil, false
+	}
+	llvmErrorMsg := msg[i:]
+	i = bytes.IndexAny(llvmErrorMsg, "\r\n")
+	if i >= 0 {
+		llvmErrorMsg = llvmErrorMsg[:i]
+	}
+	return llvmErrorMsg, true
 }
