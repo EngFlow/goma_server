@@ -111,11 +111,11 @@ var fileDescriptor_86aa5ae33157a9d0 = []byte{
 
 // Reference imports to suppress errors if they are not otherwise used.
 var _ context.Context
-var _ grpc.ClientConn
+var _ grpc.ClientConnInterface
 
 // This is a compile-time assertion to ensure that this generated file
 // is compatible with the grpc package it is being compiled against.
-const _ = grpc.SupportPackageIsVersion4
+const _ = grpc.SupportPackageIsVersion6
 
 // ExecServiceClient is the client API for ExecService service.
 //
@@ -125,10 +125,10 @@ type ExecServiceClient interface {
 }
 
 type execServiceClient struct {
-	cc *grpc.ClientConn
+	cc grpc.ClientConnInterface
 }
 
-func NewExecServiceClient(cc *grpc.ClientConn) ExecServiceClient {
+func NewExecServiceClient(cc grpc.ClientConnInterface) ExecServiceClient {
 	return &execServiceClient{cc}
 }
 

@@ -385,7 +385,8 @@ func main() {
 			ToolName:    "remoteexec_proxy",
 			ToolVersion: "0.0.0-experimental",
 		},
-		FileLookupConcurrency: 2,
+		FileLookupSema:    make(chan struct{}, 2),
+		CASBlobLookupSema: make(chan struct{}, 20),
 	}
 
 	configResp := &cmdpb.ConfigResp{

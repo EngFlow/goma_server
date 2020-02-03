@@ -39,11 +39,11 @@ var fileDescriptor_7933906ce719ddba = []byte{
 
 // Reference imports to suppress errors if they are not otherwise used.
 var _ context.Context
-var _ grpc.ClientConn
+var _ grpc.ClientConnInterface
 
 // This is a compile-time assertion to ensure that this generated file
 // is compatible with the grpc package it is being compiled against.
-const _ = grpc.SupportPackageIsVersion4
+const _ = grpc.SupportPackageIsVersion6
 
 // CacheServiceClient is the client API for CacheService service.
 //
@@ -54,10 +54,10 @@ type CacheServiceClient interface {
 }
 
 type cacheServiceClient struct {
-	cc *grpc.ClientConn
+	cc grpc.ClientConnInterface
 }
 
-func NewCacheServiceClient(cc *grpc.ClientConn) CacheServiceClient {
+func NewCacheServiceClient(cc grpc.ClientConnInterface) CacheServiceClient {
 	return &cacheServiceClient{cc}
 }
 

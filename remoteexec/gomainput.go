@@ -57,22 +57,30 @@ func (gi gomaInput) toDigest(ctx context.Context, input *gomapb.ExecReq_Input) (
 	return gi.digestCache.Get(ctx, hashKey, src)
 }
 
-func (gi gomaInput) upload(ctx context.Context, content *gomapb.FileBlob) (string, error) {
-	if content == nil {
-		return "", status.Error(codes.FailedPrecondition, "upload: contents must not be nil.")
+func (gi gomaInput) upload(ctx context.Context, content []*gomapb.FileBlob) ([]string, error) {
+	if len(content) == 0 {
+		return nil, status.Error(codes.FailedPrecondition, "upload: contents must not be empty.")
+	}
+	for _, c := range content {
+		if c == nil {
+			return nil, status.Error(codes.FailedPrecondition, "upload: contents must not be nil.")
+		}
 	}
 	resp, err := gi.gomaFile.StoreFile(ctx, &gomapb.StoreFileReq{
-		Blob: []*gomapb.FileBlob{
-			content,
-		},
+		Blob: content,
 	})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	if len(resp.HashKey) == 0 || resp.HashKey[0] == "" {
-		return "", status.Errorf(codes.Internal, "file.StoreFile: failed to set content")
+	if len(resp.HashKey) < len(content) {
+		return nil, status.Errorf(codes.Internal, "file.StoreFile: failed to set content: %d hashes returned, expected %d", len(resp.HashKey), len(content))
 	}
-	return resp.HashKey[0], nil
+	for _, hk := range resp.HashKey {
+		if hk == "" {
+			return nil, status.Errorf(codes.Internal, "file.StoreFile: failed to set content")
+		}
+	}
+	return resp.HashKey, nil
 }
 
 func lookup(ctx context.Context, c lookupClient, hashKey string) (*gomapb.FileBlob, error) {

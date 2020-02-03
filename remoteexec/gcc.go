@@ -44,6 +44,20 @@ func gccCwdAgnostic(filepath clientFilePath, args, envs []string) error {
 	var subCmd string
 	for _, arg := range args {
 		switch {
+		case arg == "-fdebug-compilation-dir":
+			// We can stop checking the rest of the flags. When seeing
+			// "-fdebug-compilation-dir", we expect the result to be CWD agnostic.
+			//
+			// Note that this check applies to both GCC and Clang and returns nil
+			// immediately for the following cases:
+			// -xx -fdebug-compilation-dir . -yy ...                 <- GCC flag
+			// -xx -XClang -fdebug-compilation-dir -XClang . -yy ... <- Clang flag
+			//
+			// As a result, clangArgCwdAgnostic() doesn't need to check this again.
+			if subCmd == "" || subCmd == "clang" {
+				return nil
+			}
+			return errors.New("fdebug-compilation-dir not supported for " + subCmd)
 		case pathFlag:
 			if filepath.IsAbs(arg) {
 				return fmt.Errorf("abs path: %s", arg)

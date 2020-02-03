@@ -587,6 +587,7 @@ type RemoteexecPlatform struct {
 	// Basename of RBE instance to use. e.g. "default_instance" or "windows".
 	RbeInstanceBasename string `protobuf:"bytes,2,opt,name=rbe_instance_basename,json=rbeInstanceBasename,proto3" json:"rbe_instance_basename,omitempty"`
 	// Set true if nsjail is available in the platform image.
+	// TODO: deprecated. always requires najail on linux platform.
 	HasNsjail            bool     `protobuf:"varint,3,opt,name=has_nsjail,json=hasNsjail,proto3" json:"has_nsjail,omitempty"`
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
 	XXX_unrecognized     []byte   `json:"-"`
@@ -860,7 +861,6 @@ type RuntimeConfig struct {
 	// the following files will be detected in this name directory in the bucket:
 	//   seq
 	//   <prebuilt-item>/descriptors/<descriptorHash>
-	//   remoteexec-platform/<property-name>
 	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	// service address for the runtime. i.e. RBE address.
 	ServiceAddr string `protobuf:"bytes,2,opt,name=service_addr,json=serviceAddr,proto3" json:"service_addr,omitempty"`
@@ -869,10 +869,8 @@ type RuntimeConfig struct {
 	// This is selector to use this runtime. i.e. if client request contains
 	// the dimentions, this runtime config will be selected.
 	PlatformRuntimeConfig *PlatformRuntimeConfig `protobuf:"bytes,6,opt,name=platform_runtime_config,json=platformRuntimeConfig,proto3" json:"platform_runtime_config,omitempty"`
-	// Platform is a set of requirements, such as haredware, operting system
+	// Platform is a set of requirements, such as hardware, operating system
 	// for RBE backend.
-	// property files stored in remoteexec-platform/ in the bucket will be
-	// merged into this.
 	Platform *Platform `protobuf:"bytes,8,opt,name=platform,proto3" json:"platform,omitempty"`
 	// prebuilts prefix to allow.
 	// if allowed_prebuilts specified, only prebuilts that are matched

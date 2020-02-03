@@ -66,10 +66,13 @@ type Adapter struct {
 	// Tool details put in request metadata.
 	ToolDetails *rpb.ToolDetails
 
-	// FileLookupConcurrency represents concurrency to look up file
+	// FileLookupSema specifies concurrency to look up file
 	// contents from file-cache-server to be converted to CAS.
-	// 1 if not specified.
-	FileLookupConcurrency int
+	FileLookupSema chan struct{}
+
+	// CASBlobLookupSema specifies concurrency to look up file blobs in in cas.lookupBlobsInStore(),
+	// which calls Store.Get().
+	CASBlobLookupSema chan struct{}
 
 	capMu        sync.Mutex
 	capabilities *rpb.ServerCapabilities
@@ -156,7 +159,7 @@ func (f *Adapter) client(ctx context.Context) Client {
 	client.CallOptions = append(client.CallOptions,
 		grpc.PerRPCCredentials(oauth.NewOauthAccess(token)))
 
-	maxBytes := int64(cas.DefaultBatchLimit)
+	maxBytes := int64(cas.DefaultBatchByteLimit)
 	if s := f.capabilities.GetCacheCapabilities().GetMaxBatchTotalSizeBytes(); s > maxBytes {
 		maxBytes = s
 	}
@@ -297,18 +300,26 @@ func (f *Adapter) Exec(ctx context.Context, req *gomapb.ExecReq) (resp *gomapb.E
 	addTimestamp("check cache", time.Since(t))
 	if !cached {
 		t = time.Now()
-		blobs := r.missingBlobs(ctx)
+		blobs, err := r.missingBlobs(ctx)
 		addTimestamp("check missing", time.Since(t))
+		if err != nil {
+			logger.Errorf("error in check missing blobs: %v", err)
+			return nil, err
+		}
+
 		t = time.Now()
-		resp := r.uploadBlobs(ctx, blobs)
+		resp, err = r.uploadBlobs(ctx, blobs)
 		addTimestamp("upload blobs", time.Since(t))
+		if err != nil {
+			logger.Errorf("error in upload blobs: %v", err)
+			return nil, err
+		}
 		if resp != nil {
 			logger.Infof("fail fast for uploading missing blobs: %v", resp)
 			return resp, nil
 		}
 
 		t = time.Now()
-		var err error
 		eresp, err = r.executeAction(ctx)
 		addTimestamp("execute", time.Since(t))
 		if err != nil {

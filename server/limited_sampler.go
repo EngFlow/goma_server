@@ -11,6 +11,17 @@ import (
 	"go.opencensus.io/trace"
 )
 
+const (
+	// same as default sampler
+	// https://github.com/census-instrumentation/opencensus-go/blob/master/trace/sampling.go#L21
+	DefaultTraceFraction = 1e-4
+
+	// trace API limit is 4800/minutes.
+	// https://cloud.google.com/trace/docs/quotas#trace-api-limit
+	// 4800/60/(total number of replicas in the project)
+	DefaultTraceQPS = 0.05
+)
+
 type limitedSampler struct {
 	sampler        trace.Sampler
 	sampleDuration time.Duration

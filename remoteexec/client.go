@@ -12,8 +12,6 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
-	"go.opencensus.io/stats"
-	"go.opencensus.io/stats/view"
 	bpb "google.golang.org/genproto/googleapis/bytestream"
 	lpb "google.golang.org/genproto/googleapis/longrunning"
 	spb "google.golang.org/genproto/googleapis/rpc/status"
@@ -23,21 +21,6 @@ import (
 
 	"go.chromium.org/goma/server/log"
 	"go.chromium.org/goma/server/rpc"
-)
-
-var (
-	numRunningOperations = stats.Int64(
-		"go.chromium.org/goma/server/remoteexec.running-operations",
-		"Number of current running exec operations",
-		stats.UnitDimensionless)
-
-	DefaultViews = []*view.View{
-		{
-			Description: `Number of current running exec operations`,
-			Measure:     numRunningOperations,
-			Aggregation: view.Sum(),
-		},
-	}
 )
 
 // Client is a remoteexec API client to ClientConn.
@@ -169,13 +152,6 @@ func ExecuteAndWait(ctx context.Context, c Client, req *rpb.ExecuteRequest, opts
 	logger := log.FromContext(ctx)
 	logger.Infof("execute action")
 
-	recordStart := func() {
-		stats.Record(ctx, numRunningOperations.M(1))
-	}
-	recordFinish := func() {
-		stats.Record(ctx, numRunningOperations.M(-1))
-	}
-
 	var opName string
 	var waitReq *rpb.WaitExecutionRequest
 	resp := &rpb.ExecuteResponse{}
@@ -191,7 +167,7 @@ func ExecuteAndWait(ctx context.Context, c Client, req *rpb.ExecuteRequest, opts
 		if waitReq != nil {
 			stream, err = c.Exec().WaitExecution(ctx, waitReq, opts...)
 		} else {
-			recordStart()
+			recordRemoteExecStart(ctx)
 			stream, err = c.Exec().Execute(ctx, req, opts...)
 		}
 		if err != nil {
@@ -204,7 +180,7 @@ func ExecuteAndWait(ctx context.Context, c Client, req *rpb.ExecuteRequest, opts
 				// otherwise, rerun from WaitExecution.
 				if status.Code(err) == codes.NotFound {
 					waitReq = nil
-					recordFinish()
+					recordRemoteExecFinish(ctx)
 					return status.Errorf(codes.Unavailable, "operation stream lost: %v", err)
 				}
 				return err
@@ -230,7 +206,7 @@ func ExecuteAndWait(ctx context.Context, c Client, req *rpb.ExecuteRequest, opts
 			return erespErr(pctx, resp)
 		}
 	})
-	recordFinish()
+	recordRemoteExecFinish(ctx)
 	if err == nil {
 		err = status.FromProto(resp.GetStatus()).Err()
 	}

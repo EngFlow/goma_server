@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"math/rand"
 	"path"
 	"sort"
@@ -40,7 +41,7 @@ var (
 		{
 			Description: "configmap pubsub error",
 			Measure:     pubsubErrors,
-			Aggregation: view.LastValue(),
+			Aggregation: view.Count(),
 		},
 	}
 )
@@ -51,9 +52,6 @@ var (
 //
 // if seq is updated from last load, it will load CmdDescriptor
 // from <bucket>/<runtime>/<prebuilt_item>/descriptors/<descriptorHash>.
-//
-// also loads platform properties for remoteexec API
-// from <bucket>/<runtime>/remoteexec-platform/<property-name>.
 type ConfigMapLoader struct {
 	ConfigMap    ConfigMap
 	ConfigLoader ConfigLoader
@@ -89,23 +87,21 @@ type ConfigMapWatcher interface {
 // <bucket> is <project>-toolchain-config.
 // in the <bucket>
 //
-//  <config>.config: text proto ConfigMap
-//
 //  <runtime>/
 //           seq: text, sequence number.
 //           <prebuilt-item>/descriptors/<descriptorHash>: proto CmdDescriptor
-//           remoteexec-platform/<property-name>: text, property-value
-//
-// <bucket> might have several <config>.config, and each config might
-// have different set of runtime etc.
 //
 // Watcher watches */seq files via default notification topic on the bucket.
-// Seqs and RuntimeConfigs will read <config>.config everytime.
+// Seqs and RuntimeConfigs will read ConfigMapFile everytime.
 type ConfigMapBucket struct {
 	// URI of config data.
-	// gs://<bucket>/<config>.config
-	// e.g. gs://$project-toolchain-config/$name.config
-	URI          string
+	// gs://<bucket>/
+	// e.g. gs://$project-toolchain-config/
+	URI string
+
+	ConfigMap     *cmdpb.ConfigMap
+	ConfigMapFile string
+
 	PubsubClient *pubsub.Client
 
 	// StorageClient is an interface for accessing Cloud Storage. It can
@@ -226,20 +222,18 @@ func (w configMapBucketPoller) Close() error {
 }
 
 func (c ConfigMapBucket) configMap(ctx context.Context) (*cmdpb.ConfigMap, error) {
-	bucket, obj, err := splitGCSPath(c.URI)
+	if c.ConfigMapFile == "" {
+		return proto.Clone(c.ConfigMap).(*cmdpb.ConfigMap), nil
+	}
+	buf, err := ioutil.ReadFile(c.ConfigMapFile)
 	if err != nil {
 		return nil, err
 	}
-	buf, err := storageReadAll(ctx, c.StorageClient, bucket, obj)
+	err = proto.UnmarshalText(string(buf), c.ConfigMap)
 	if err != nil {
 		return nil, err
 	}
-	cm := &cmdpb.ConfigMap{}
-	err = proto.UnmarshalText(string(buf), cm)
-	if err != nil {
-		return nil, fmt.Errorf("parse %s: %v", c.URI, err)
-	}
-	return cm, nil
+	return proto.Clone(c.ConfigMap).(*cmdpb.ConfigMap), nil
 }
 
 func cloudStorageNotification(ctx context.Context, s stiface.Client, bucket string) (*storage.Notification, error) {
@@ -331,6 +325,7 @@ func (c ConfigMapBucket) pubsubWatcher(ctx context.Context) (ConfigMapWatcher, e
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	// TODO: watch configMapFile.
 	w := configMapBucketWatcher{
 		s:      subscription,
 		cancel: cancel,
@@ -496,11 +491,13 @@ func mergePlatformProperties(rbePlatform *cmdpb.RemoteexecPlatform, platform *cm
 // Load loads toolchain config from <uri>.
 // It sets rc.ServiceAddr  as target addr.
 func (c *ConfigLoader) Load(ctx context.Context, uri string, rc *cmdpb.RuntimeConfig) ([]*cmdpb.Config, error) {
-	platform, err := loadRemoteexecPlatform(ctx, c.StorageClient, uri)
-	if err != nil {
-		return nil, err
+	platform := &cmdpb.RemoteexecPlatform{}
+	for _, p := range rc.Platform.GetProperties() {
+		platform.Properties = append(platform.Properties, &cmdpb.RemoteexecPlatform_Property{
+			Name:  p.Name,
+			Value: p.Value,
+		})
 	}
-	mergePlatformProperties(platform, rc.Platform)
 	platform.HasNsjail = rc.GetPlatformRuntimeConfig().GetHasNsjail()
 
 	confs, err := loadConfigs(ctx, c.StorageClient, uri, rc, platform)
@@ -623,46 +620,6 @@ func loadDescriptor(ctx context.Context, client stiface.Client, bucket, name str
 		return nil, fmt.Errorf("parse %s: %v", name, err)
 	}
 	return d, nil
-}
-
-func loadRemoteexecPlatform(ctx context.Context, client stiface.Client, uri string) (*cmdpb.RemoteexecPlatform, error) {
-	logger := log.FromContext(ctx)
-	bucket, obj, err := splitGCSPath(uri)
-	if err != nil {
-		return nil, err
-	}
-	obj = path.Join(obj, "remoteexec-platform")
-
-	bkt := client.Bucket(bucket)
-	if bkt == nil {
-		return nil, fmt.Errorf("could not find storage bucket %s", bucket)
-	}
-	iter := bkt.Objects(ctx, &storage.Query{
-		Prefix: obj,
-	})
-
-	// pagination?
-	platform := &cmdpb.RemoteexecPlatform{}
-	logger.Infof("load remoteexec-platform from %s", bucket)
-	for {
-		attr, err := iter.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("iter %s/%s: %v", bucket, obj, err)
-		}
-		buf, err := storageReadAll(ctx, client, bucket, attr.Name)
-		if err != nil {
-			return nil, fmt.Errorf("load %s: %v", attr.Name, err)
-		}
-		platform.Properties = append(platform.Properties, &cmdpb.RemoteexecPlatform_Property{
-			Name:  path.Base(attr.Name),
-			Value: strings.TrimSpace(string(buf)),
-		})
-	}
-	logger.Infof("loaded remoteexec-platform from %s: %s", bucket, platform)
-	return platform, nil
 }
 
 func checkPrebuilt(rc *cmdpb.RuntimeConfig, objName string) error {

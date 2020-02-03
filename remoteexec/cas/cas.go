@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	rpb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
+	"github.com/golang/protobuf/proto"
 	"go.opencensus.io/trace"
 	bpb "google.golang.org/genproto/googleapis/bytestream"
 	"google.golang.org/grpc"
@@ -24,8 +26,10 @@ import (
 )
 
 const (
-	// DefaultBatchLimit is bytes limit for cas BatchUploadBlobs.
-	DefaultBatchLimit = 4 * 1024 * 1024
+	// DefaultBatchByteLimit is bytes limit for cas BatchUploadBlobs.
+	DefaultBatchByteLimit = 4 * 1024 * 1024
+	// BatchBlobLimit is max number of blobs in BatchUploadBlobs.
+	batchBlobLimit = 1000
 )
 
 // Client is a client of cas service.
@@ -99,102 +103,201 @@ func (e MissingError) Error() string {
 	return fmt.Sprintf("missing %d blobs", len(e.Blobs))
 }
 
-// Upload uploads blobs stored in Store to instance of cas service.
-func (c CAS) Upload(ctx context.Context, instance string, blobs ...*rpb.Digest) error {
-	span := trace.FromContext(ctx)
-	logger := log.FromContext(ctx)
-	logger.Infof("upload blobs %v", blobs)
-	// sort by size_bytes.
+func separateBlobsByByteLimit(blobs []*rpb.Digest, instance string, byteLimit int64) ([]*rpb.Digest, []*rpb.Digest) {
+	if len(blobs) == 0 {
+		return nil, nil
+	}
+
 	sort.Slice(blobs, func(i, j int) bool {
 		return blobs[i].SizeBytes < blobs[j].SizeBytes
 	})
-	var missing MissingError
 
-	// up to max_batch_total_size_bytes, use BatchUpdateBlobs.
-	// more than this, use bytestream.Write.
-
-	// TODO: better packing
-	var i int
-
-	batchLimit := int64(DefaultBatchLimit)
-	if c.CacheCapabilities != nil && c.CacheCapabilities.MaxBatchTotalSizeBytes > 0 {
-		batchLimit = c.CacheCapabilities.MaxBatchTotalSizeBytes
+	// Create dummy data to check protobuf size. To avoid redundant allocations, find the largest digest size.
+	maxSizeBytes := blobs[len(blobs)-1].SizeBytes
+	dummyReq := &rpb.BatchUpdateBlobsRequest{
+		InstanceName: instance,
+		Requests:     []*rpb.BatchUpdateBlobsRequest_Request{{Data: make([]byte, 1, maxSizeBytes)}},
 	}
-Loop:
-	for i < len(blobs) {
-		if blobs[i].SizeBytes >= batchLimit {
-			break
+
+	for i, blob := range blobs {
+		// Create dummy data to check protobuf size.
+		dummyReq.Requests[0].Digest = blob
+		dummyReq.Requests[0].Data = dummyReq.Requests[0].Data[:blob.SizeBytes]
+		if int64(proto.Size(dummyReq)) >= byteLimit {
+			return blobs[:i], blobs[i:]
 		}
-		batchReq := &rpb.BatchUpdateBlobsRequest{
-			InstanceName: instance,
-		}
-		var size int64
-		i0 := i
-		for ; i < len(blobs); i++ {
-			size += blobs[i].SizeBytes
-			if size >= batchLimit {
-				break
-			}
-			data, ok := c.Store.Get(blobs[i])
+	}
+	// All blobs have protobuf size below `byteLimit`.
+	return blobs, []*rpb.Digest{}
+}
+
+func lookupBlobsInStore(ctx context.Context, blobs []*rpb.Digest, store *digest.Store, sema chan struct{}) ([]*rpb.BatchUpdateBlobsRequest_Request, []MissingBlob) {
+	span := trace.FromContext(ctx)
+
+	var wg sync.WaitGroup
+
+	type blobLookupResult struct {
+		err error
+		req *rpb.BatchUpdateBlobsRequest_Request
+	}
+	results := make([]blobLookupResult, len(blobs))
+
+	for i := range blobs {
+		wg.Add(1)
+		go func(blob *rpb.Digest, result *blobLookupResult) {
+			defer wg.Done()
+			sema <- struct{}{}
+			defer func() {
+				<-sema
+			}()
+
+			data, ok := store.Get(blob)
 			if !ok {
-				span.Annotatef(nil, "blob not found in cas: %v", blobs[i])
-				missing.Blobs = append(missing.Blobs, MissingBlob{
-					Digest: blobs[i],
-					Err:    errBlobNotInReq,
-				})
-				continue
+				span.Annotatef(nil, "blob not found in cas: %v", blob)
+				result.err = errBlobNotInReq
+				return
 			}
 			b, err := datasource.ReadAll(ctx, data)
 			if err != nil {
-				span.Annotatef(nil, "blob data for %v: %v", blobs[i], err)
-				missing.Blobs = append(missing.Blobs, MissingBlob{
-					Digest: blobs[i],
-					Err:    err,
-				})
-				continue
+				span.Annotatef(nil, "blob data for %v: %v", blob, err)
+				result.err = err
+				return
 			}
-			batchReq.Requests = append(batchReq.Requests, &rpb.BatchUpdateBlobsRequest_Request{
+			// TODO: This is inefficient because we are reading all
+			// sources whether or not they are going to be returned, due to the
+			// size computation happening later. This might be okay as long as
+			// we are not reading too much extra data in one operation.
+			//
+			// We should instead return all blob requests for blobs < `byteLimit`,
+			// batched into multiple BatchUpdateBlobsRequests.
+			result.req = &rpb.BatchUpdateBlobsRequest_Request{
 				Digest: data.Digest(),
 				Data:   b,
-			})
-		}
-		logger.Infof("upload by batch [%d,%d) out of %d", i0, i, len(blobs))
-		t := time.Now()
-		span.Annotatef(nil, "batch update %d blobs", len(batchReq.Requests))
-		// TODO: should we report rpc error as missing input too?
-		var batchResp *rpb.BatchUpdateBlobsResponse
-		err := rpc.Retry{}.Do(ctx, func() error {
-			var err error
-			batchResp, err = c.Client.CAS().BatchUpdateBlobs(ctx, batchReq)
-			return fixRBEInternalError(err)
-		})
-		if err != nil {
-			if grpc.Code(err) == codes.ResourceExhausted {
-				// gRPC returns ResourceExhausted if request message is larger than max.
-				logger.Warnf("upload by batch [%d,%d): %v", i0, i, err)
-				// try with bytestream.
-				// TODO: retry with fewer blobs?
-				i = i0
-				break Loop
 			}
-
-			return grpc.Errorf(grpc.Code(err), "batch update blobs: %v", err)
-		}
-		for _, res := range batchResp.Responses {
-			if codes.Code(res.Status.Code) != codes.OK {
-				span.Annotatef(nil, "batch update blob %v: %v", res.Digest, res.Status)
-				return grpc.Errorf(codes.Code(res.Status.Code), "batch update blob %v: %v", res.Digest, res.Status)
-			}
-		}
-		logger.Infof("upload by batch %d blobs in %s", len(batchReq.Requests), time.Since(t))
+		}(blobs[i], &results[i])
 	}
-	logger.Infof("upload by streaming from %d out of %d", i, len(blobs))
-	for ; i < len(blobs); i++ {
-		data, ok := c.Store.Get(blobs[i])
+	wg.Wait()
+
+	var reqs []*rpb.BatchUpdateBlobsRequest_Request
+	var missingBlobs []MissingBlob
+
+	logger := log.FromContext(ctx)
+	for i, result := range results {
+		blob := blobs[i]
+		if result.err != nil {
+			missingBlobs = append(missingBlobs, MissingBlob{
+				Digest: blob,
+				Err:    result.err,
+			})
+			continue
+		}
+		if result.req != nil {
+			reqs = append(reqs, result.req)
+			continue
+		}
+		logger.Errorf("Lookup of blobs[%d]=%v yielded neither error nor request", i, blob)
+	}
+	return reqs, missingBlobs
+}
+
+func createBatchUpdateBlobsRequests(blobReqs []*rpb.BatchUpdateBlobsRequest_Request, instance string, byteLimit int64) []*rpb.BatchUpdateBlobsRequest {
+	var batchReqs []*rpb.BatchUpdateBlobsRequest
+
+	batchReqNoReqsSize := int64(proto.Size(&rpb.BatchUpdateBlobsRequest{InstanceName: instance}))
+	size := batchReqNoReqsSize
+
+	lastOffset := 0
+	for i := range blobReqs {
+		// This code assumes that all blobs in `blobReqs`, when added as the only element of
+		// `batchReq.Requests`, will keep the marshaled proto size of `batchReq` < `byteLimit`.
+		// If `byteLimit` is 0, then it is ignored.
+
+		// Determine the extra proto size introduced by adding the current req.
+		size += int64(proto.Size(&rpb.BatchUpdateBlobsRequest{Requests: blobReqs[i : i+1]}))
+
+		// Add a new BatchUpdateBlobsRequest with blobs from the first blob after the
+		// previous BatchUpdateBlobsRequest up to and including the current blob, if:
+		// - this is the final blob
+		// - adding this blob reaches the blob count limit
+		// - adding the next blob pushes the size over the byte limit
+		switch {
+		case i == len(blobReqs)-1:
+			fallthrough
+		case i+1 == lastOffset+batchBlobLimit:
+			fallthrough
+		case byteLimit > 0 && size+int64(proto.Size(&rpb.BatchUpdateBlobsRequest{Requests: blobReqs[i+1 : i+2]})) > byteLimit:
+			batchReqs = append(batchReqs, &rpb.BatchUpdateBlobsRequest{
+				InstanceName: instance,
+				Requests:     blobReqs[lastOffset : i+1],
+			})
+			size = batchReqNoReqsSize
+			lastOffset = i + 1
+		}
+	}
+	return batchReqs
+}
+
+// Upload uploads blobs stored in Store to instance of cas service.
+func (c CAS) Upload(ctx context.Context, instance string, sema chan struct{}, blobs ...*rpb.Digest) error {
+	span := trace.FromContext(ctx)
+	logger := log.FromContext(ctx)
+	logger.Infof("upload blobs %v", blobs)
+
+	// up to max_batch_total_size_bytes, use BatchUpdateBlobs.
+	// more than this, use bytestream.Write.
+	batchLimit := int64(DefaultBatchByteLimit)
+	if c.CacheCapabilities != nil && c.CacheCapabilities.MaxBatchTotalSizeBytes > 0 {
+		batchLimit = c.CacheCapabilities.MaxBatchTotalSizeBytes
+	}
+	smallBlobs, largeBlobs := separateBlobsByByteLimit(blobs, instance, batchLimit)
+
+	logger.Infof("upload by batch %d out of %d", len(smallBlobs), len(blobs))
+	blobReqs, missingBlobs := lookupBlobsInStore(ctx, smallBlobs, c.Store, sema)
+	missing := MissingError{
+		Blobs: missingBlobs,
+	}
+
+	batchReqs := createBatchUpdateBlobsRequests(blobReqs, instance, batchLimit)
+	for _, batchReq := range batchReqs {
+		uploaded := false
+		for !uploaded {
+			t := time.Now()
+			span.Annotatef(nil, "batch update %d blobs", len(batchReq.Requests))
+			// TODO: should we report rpc error as missing input too?
+			var batchResp *rpb.BatchUpdateBlobsResponse
+			err := rpc.Retry{}.Do(ctx, func() error {
+				var err error
+				batchResp, err = c.Client.CAS().BatchUpdateBlobs(ctx, batchReq)
+				return fixRBEInternalError(err)
+			})
+			if err != nil {
+				if grpc.Code(err) == codes.ResourceExhausted {
+					// gRPC returns ResourceExhausted if request message is larger than max.
+					logger.Warnf("upload by batch %d blobs: %v", len(batchReq.Requests), err)
+					// try with bytestream.
+					// TODO: retry with fewer blobs?
+					continue
+				}
+
+				return grpc.Errorf(grpc.Code(err), "batch update blobs: %v", err)
+			}
+			for _, res := range batchResp.Responses {
+				if codes.Code(res.Status.Code) != codes.OK {
+					span.Annotatef(nil, "batch update blob %v: %v", res.Digest, res.Status)
+					return grpc.Errorf(codes.Code(res.Status.Code), "batch update blob %v: %v", res.Digest, res.Status)
+				}
+			}
+			uploaded = true
+			logger.Infof("upload by batch %d blobs in %s", len(batchReq.Requests), time.Since(t))
+		}
+	}
+	logger.Infof("upload by streaming from %d out of %d", len(largeBlobs), len(blobs))
+	for _, blob := range largeBlobs {
+		data, ok := c.Store.Get(blob)
 		if !ok {
-			span.Annotatef(nil, "blob not found in cas: %v", blobs[i])
+			span.Annotatef(nil, "blob not found in cas: %v", blob)
 			missing.Blobs = append(missing.Blobs, MissingBlob{
-				Digest: blobs[i],
+				Digest: blob,
 				Err:    errBlobNotInReq,
 			})
 			continue
@@ -202,14 +305,14 @@ Loop:
 		err := rpc.Retry{}.Do(ctx, func() error {
 			rd, err := data.Open(ctx)
 			if err != nil {
-				span.Annotatef(nil, "upload open %v: %v", blobs[i], err)
+				span.Annotatef(nil, "upload open %v: %v", blob, err)
 				missing.Blobs = append(missing.Blobs, MissingBlob{
-					Digest: blobs[i],
+					Digest: blob,
 					Err:    err,
 				})
 				return err
 			}
-			err = UploadDigest(ctx, c.Client.ByteStream(), instance, blobs[i], rd)
+			err = UploadDigest(ctx, c.Client.ByteStream(), instance, blob, rd)
 			if err != nil {
 				rd.Close()
 				return fixRBEInternalError(err)
@@ -218,7 +321,7 @@ Loop:
 			return nil
 		})
 		if err != nil {
-			logger.Errorf("upload streaming %s error: %v", blobs[i], err)
+			logger.Errorf("upload streaming %s error: %v", blob, err)
 			continue
 		}
 	}

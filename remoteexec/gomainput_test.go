@@ -30,15 +30,19 @@ func TestUploadWork(t *testing.T) {
 		digestCache: cluster.adapter.DigestCache,
 	}
 
-	hk, err := gi.upload(ctx, &gomapb.FileBlob{
-		BlobType: gomapb.FileBlob_FILE.Enum(),
-		Content:  []byte("dummy"),
+	hks, err := gi.upload(ctx, []*gomapb.FileBlob{
+		{
+			BlobType: gomapb.FileBlob_FILE.Enum(),
+			Content:  []byte("dummy"),
+		},
 	})
 	if err != nil {
 		t.Errorf("gi.upload err=%v; want nil", err)
 	}
-	if hk == "" {
-		t.Errorf("gi.upload returns hk=empty string; want non empty")
+	for _, hk := range hks {
+		if hk == "" {
+			t.Errorf("gi.upload returns hk=empty string; want non empty")
+		}
 	}
 }
 

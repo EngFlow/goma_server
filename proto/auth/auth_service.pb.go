@@ -38,11 +38,11 @@ var fileDescriptor_eea8da14b90d2639 = []byte{
 
 // Reference imports to suppress errors if they are not otherwise used.
 var _ context.Context
-var _ grpc.ClientConn
+var _ grpc.ClientConnInterface
 
 // This is a compile-time assertion to ensure that this generated file
 // is compatible with the grpc package it is being compiled against.
-const _ = grpc.SupportPackageIsVersion4
+const _ = grpc.SupportPackageIsVersion6
 
 // AuthServiceClient is the client API for AuthService service.
 //
@@ -52,10 +52,10 @@ type AuthServiceClient interface {
 }
 
 type authServiceClient struct {
-	cc *grpc.ClientConn
+	cc grpc.ClientConnInterface
 }
 
-func NewAuthServiceClient(cc *grpc.ClientConn) AuthServiceClient {
+func NewAuthServiceClient(cc grpc.ClientConnInterface) AuthServiceClient {
 	return &authServiceClient{cc}
 }
 

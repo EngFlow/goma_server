@@ -56,6 +56,16 @@ func TestParseTarget(t *testing.T) {
 			},
 		},
 		{
+			input: "armv7a-cros-linux-gnueabihf",
+			want: target{
+				arch:     "armv7a",
+				archType: "armv7a",
+				vendor:   "cros",
+				os:       "linux",
+				env:      "gnueabihf",
+			},
+		},
+		{
 			input: "i486-linux-gnu",
 			want: target{
 				arch:     "i486",

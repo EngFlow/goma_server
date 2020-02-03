@@ -191,6 +191,90 @@ func TestGccCwdAgnostic(t *testing.T) {
 	}
 }
 
+func TestGccCwdAgnosticForDebugCompilationDir(t *testing.T) {
+	// Tests for supporting "-fdebug-compilation-dir", see b/135719929.
+	// We could have merged the cases here into TestGccCwdAgnostic, but decided
+	// to separate them for clarity.
+
+	// Do not set "-g*" options in baseReleaseArgs!
+	baseReleaseArgs := []string{
+		"../../third_party/llvm-build/Release+Asserts/bin/clang++",
+		"../../base/time/time.cc",
+	}
+
+	// Since "-fdebug-compilation-dir" has been moved to clang driver flags in
+	// https://reviews.llvm.org/D63387, we set cases both with and w/o "-Xclang"
+	for _, tc := range []struct {
+		desc        string
+		args        []string
+		envs        []string
+		cwdAgnostic bool
+	}{
+		{
+			desc: "basic",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-fdebug-compilation-dir",
+				"."),
+			cwdAgnostic: true,
+		},
+		{
+			desc: "-Xclang",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-Xclang",
+				"-fdebug-compilation-dir",
+				"-Xclang",
+				"."),
+			cwdAgnostic: true,
+		},
+		{
+			desc: "With -g* DBG options",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-g2",
+				"-gsplit-dwarf",
+				"-fdebug-compilation-dir",
+				"."),
+			cwdAgnostic: true,
+		},
+		{
+			desc: "-Xclang with -g* DBG option",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-g2",
+				"-gsplit-dwarf",
+				"-Xclang",
+				"-fdebug-compilation-dir",
+				"-Xclang",
+				"."),
+			cwdAgnostic: true,
+		},
+		{
+			// Make sure the CWD agnostic still returns false if
+			// "-fdebug-compilation-dir" is not specified.
+			desc: "Only -g* DBG options",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-g2",
+				"-gsplit-dwarf"),
+			cwdAgnostic: false,
+		},
+		{
+			// "-fdebug-compilation-dir" is not supported as LLVM flags.
+			desc: "No LLVM",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-mllvm",
+				"-fdebug-compilation-dir",
+				"-mllvm",
+				"."),
+			cwdAgnostic: false,
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			err := gccCwdAgnostic(posixpath.FilePath{}, tc.args, tc.envs)
+			if (err == nil) != tc.cwdAgnostic {
+				t.Errorf("gccCwdAgnostic(posixpath.FilePath, args, envs)=%v; cwdAgnostic=%t", err, tc.cwdAgnostic)
+			}
+		})
+	}
+}
+
 func TestGccOutputs(t *testing.T) {
 	for _, tc := range []struct {
 		desc string

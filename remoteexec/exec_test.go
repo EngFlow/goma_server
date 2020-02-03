@@ -9,9 +9,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
+	"sync"
 	"testing"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/google/go-cmp/cmp"
 
 	"go.chromium.org/goma/server/hash"
 	"go.chromium.org/goma/server/log"
@@ -170,11 +173,16 @@ func TestChangeSymlinkAbsToRel(t *testing.T) {
 }
 
 type fakeGomaInput struct {
-	digests map[*gomapb.ExecReq_Input]digest.Data
-	hashes  map[*gomapb.FileBlob]string
+	mu         sync.Mutex
+	digests    map[*gomapb.ExecReq_Input]digest.Data
+	hashes     map[*gomapb.FileBlob]string
+	uploaded   []string
+	numUploads int
 }
 
 func (f *fakeGomaInput) setInputs(inputs []*gomapb.ExecReq_Input) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.digests == nil {
 		f.digests = make(map[*gomapb.ExecReq_Input]digest.Data)
 	}
@@ -182,7 +190,7 @@ func (f *fakeGomaInput) setInputs(inputs []*gomapb.ExecReq_Input) {
 		f.hashes = make(map[*gomapb.FileBlob]string)
 	}
 	for _, input := range inputs {
-		f.digests[input] = digest.Bytes(input.GetFilename(), input.Content.Content)
+		f.digests[input] = digest.Bytes(input.GetFilename(), input.Content.GetContent())
 		f.hashes[input.Content] = input.GetHashKey()
 	}
 }
@@ -195,12 +203,271 @@ func (f *fakeGomaInput) toDigest(ctx context.Context, in *gomapb.ExecReq_Input) 
 	return d, nil
 }
 
-func (f *fakeGomaInput) upload(ctx context.Context, blob *gomapb.FileBlob) (string, error) {
-	h, ok := f.hashes[blob]
-	if !ok {
-		return "", errors.New("upload error")
+func (f *fakeGomaInput) upload(ctx context.Context, blobs []*gomapb.FileBlob) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	hashes := make([]string, 0, len(blobs))
+	for _, blob := range blobs {
+		h, ok := f.hashes[blob]
+		if !ok {
+			return nil, errors.New("upload error")
+		}
+		f.uploaded = append(f.uploaded, h)
+		f.numUploads++
+		hashes = append(hashes, h)
 	}
-	return h, nil
+	return hashes, nil
+}
+
+func makeInput(tb testing.TB, content, filename string) *gomapb.ExecReq_Input {
+	tb.Helper()
+	blob := &gomapb.FileBlob{
+		BlobType: gomapb.FileBlob_FILE.Enum(),
+		Content:  []byte(content),
+		FileSize: proto.Int64(int64(len(content))),
+	}
+	hashkey, err := hash.SHA256Proto(blob)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return &gomapb.ExecReq_Input{
+		HashKey:  proto.String(hashkey),
+		Filename: proto.String(filename),
+		Content:  blob,
+	}
+}
+
+func TestUploadInputFiles(t *testing.T) {
+	sema := make(chan struct{}, 3)
+
+	inputs := make([]*gomapb.ExecReq_Input, 6)
+	for i := range inputs {
+		inputs[i] = makeInput(t, fmt.Sprintf("content %d", i), fmt.Sprintf("input_%d", i))
+	}
+
+	manyInputs := make([]*gomapb.ExecReq_Input, 1000)
+	for i := range manyInputs {
+		manyInputs[i] = makeInput(t, fmt.Sprintf("content %d", i), fmt.Sprintf("input_%d", i))
+	}
+
+	makeHashKeys := func(inputs []*gomapb.ExecReq_Input) []string {
+		result := make([]string, len(inputs))
+		for i, input := range inputs {
+			result[i] = input.GetHashKey()
+		}
+		return result
+	}
+
+	for _, tc := range []struct {
+		desc           string
+		stored         []*gomapb.ExecReq_Input
+		inputs         []*gomapb.ExecReq_Input
+		wantUploaded   []string
+		wantNumUploads int
+		wantErr        bool
+	}{
+		{
+			desc:           "uploads",
+			stored:         inputs,
+			inputs:         inputs,
+			wantUploaded:   makeHashKeys(inputs),
+			wantNumUploads: len(inputs),
+		}, {
+			desc:           "many uploads",
+			stored:         manyInputs,
+			inputs:         manyInputs,
+			wantUploaded:   makeHashKeys(manyInputs),
+			wantNumUploads: len(manyInputs),
+		}, {
+			desc:    "all errors",
+			inputs:  inputs,
+			wantErr: true,
+		}, {
+			desc:           "partial errors",
+			stored:         inputs[:3],
+			inputs:         inputs,
+			wantUploaded:   makeHashKeys(manyInputs[:3]),
+			wantNumUploads: len(inputs[:3]),
+			wantErr:        true,
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			gi := &fakeGomaInput{}
+			ctx := context.Background()
+
+			gi.setInputs(tc.stored)
+
+			err := uploadInputFiles(ctx, tc.inputs, gi, sema)
+
+			sort.Strings(gi.uploaded)
+			sort.Strings(tc.wantUploaded)
+			if !cmp.Equal(gi.uploaded, tc.wantUploaded) {
+				t.Errorf("gi.uploaded -want +got: %s", cmp.Diff(tc.wantUploaded, gi.uploaded))
+			}
+			if gi.numUploads != tc.wantNumUploads {
+				t.Errorf("numUploads=%d; want %d", gi.numUploads, tc.wantNumUploads)
+			}
+			if err != nil && !tc.wantErr {
+				t.Errorf("err=%v; want nil", err)
+			}
+		})
+	}
+}
+
+func TestInputFiles(t *testing.T) {
+	sema := make(chan struct{}, 3)
+
+	// These are minimal function / map that are not being tested.
+	rootRel := func(filename string) (string, error) { return filename, nil }
+	executableInputs := map[string]bool{}
+
+	inputs := make([]*gomapb.ExecReq_Input, 6)
+	inputsNoContent := make([]*gomapb.ExecReq_Input, len(inputs))
+	for i := range inputs {
+		input := makeInput(t, fmt.Sprintf("content %d", i), fmt.Sprintf("input_%d", i))
+		inputs[i] = input
+		inputsNoContent[i] = &gomapb.ExecReq_Input{
+			HashKey:  input.HashKey,
+			Filename: input.Filename,
+		}
+	}
+
+	manyInputs := make([]*gomapb.ExecReq_Input, 1000)
+	for i := range manyInputs {
+		manyInputs[i] = makeInput(t, fmt.Sprintf("content %d", i), fmt.Sprintf("input_%d", i))
+	}
+
+	makeMissing := func(input *gomapb.ExecReq_Input) inputFileResult {
+		return inputFileResult{
+			missingInput:  input.GetFilename(),
+			missingReason: "input: not found",
+		}
+	}
+	makeFound := func(input *gomapb.ExecReq_Input) inputFileResult {
+		return inputFileResult{
+			file: merkletree.Entry{
+				Name: input.GetFilename(), // Because `rootRel()` is an identity function
+				Data: inputDigestData{
+					filename: input.GetFilename(),
+					Data:     digest.Bytes(input.GetFilename(), input.Content.GetContent()),
+				},
+			},
+			uploaded: input.Content != nil,
+		}
+	}
+
+	for _, tc := range []struct {
+		desc       string
+		stored     []*gomapb.ExecReq_Input
+		inputs     []*gomapb.ExecReq_Input
+		wantResult []inputFileResult
+	}{
+		{
+			desc:   "all missing",
+			inputs: inputsNoContent,
+			wantResult: []inputFileResult{
+				makeMissing(inputs[0]),
+				makeMissing(inputs[1]),
+				makeMissing(inputs[2]),
+				makeMissing(inputs[3]),
+				makeMissing(inputs[4]),
+				makeMissing(inputs[5]),
+			},
+		}, {
+			desc:   "new content but not stored",
+			inputs: inputs,
+			wantResult: []inputFileResult{
+				makeMissing(inputs[0]),
+				makeMissing(inputs[1]),
+				makeMissing(inputs[2]),
+				makeMissing(inputs[3]),
+				makeMissing(inputs[4]),
+				makeMissing(inputs[5]),
+			},
+		}, {
+			desc:   "all stored no content",
+			stored: inputsNoContent,
+			inputs: inputsNoContent,
+			wantResult: []inputFileResult{
+				makeFound(inputsNoContent[0]),
+				makeFound(inputsNoContent[1]),
+				makeFound(inputsNoContent[2]),
+				makeFound(inputsNoContent[3]),
+				makeFound(inputsNoContent[4]),
+				makeFound(inputsNoContent[5]),
+			},
+		}, {
+			desc:   "all uploaded",
+			stored: inputs,
+			inputs: inputs,
+			wantResult: []inputFileResult{
+				makeFound(inputs[0]),
+				makeFound(inputs[1]),
+				makeFound(inputs[2]),
+				makeFound(inputs[3]),
+				makeFound(inputs[4]),
+				makeFound(inputs[5]),
+			},
+		},
+		{
+			desc: "mixed",
+			stored: []*gomapb.ExecReq_Input{
+				inputs[0],
+				inputsNoContent[1],
+				inputs[3],
+				inputsNoContent[4],
+			},
+			inputs: []*gomapb.ExecReq_Input{
+				inputs[0],
+				inputsNoContent[1],
+				inputs[2],
+				inputs[3],
+				inputsNoContent[4],
+				inputsNoContent[5],
+			},
+			wantResult: []inputFileResult{
+				makeFound(inputs[0]),
+				makeFound(inputsNoContent[1]),
+				makeMissing(inputs[2]),
+				makeFound(inputs[3]),
+				makeFound(inputsNoContent[4]),
+				makeMissing(inputs[5]),
+			},
+		}, {
+			desc:   "many uploads",
+			stored: manyInputs,
+			inputs: manyInputs,
+			wantResult: func() []inputFileResult {
+				result := make([]inputFileResult, len(manyInputs))
+				for i, input := range manyInputs {
+					result[i] = makeFound(input)
+				}
+				return result
+			}(),
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			gi := &fakeGomaInput{}
+			gi.setInputs(tc.stored)
+			ctx := context.Background()
+
+			results := inputFiles(ctx, tc.inputs, gi, rootRel, executableInputs, sema)
+
+			digestDataComparer := cmp.Comparer(func(x, y digest.Data) bool {
+				if x == nil && y == nil {
+					return true
+				}
+				if x == nil || y == nil {
+					return false
+				}
+				return proto.Equal(x.Digest(), y.Digest()) && x.String() == y.String()
+			})
+
+			if !cmp.Equal(results, tc.wantResult, cmp.AllowUnexported(inputFileResult{}), cmp.AllowUnexported(inputDigestData{}), digestDataComparer) {
+				t.Errorf("results=%v; want %v", results, tc.wantResult)
+			}
+		})
+	}
 }
 
 type nopLogger struct{}
@@ -220,21 +487,7 @@ func (nopLogger) Sync() error                              { return nil }
 func BenchmarkInputFiles(b *testing.B) {
 	var inputs []*gomapb.ExecReq_Input
 	for i := 0; i < 1000; i++ {
-		content := fmt.Sprintf("content %d", i)
-		blob := &gomapb.FileBlob{
-			BlobType: gomapb.FileBlob_FILE.Enum(),
-			Content:  []byte(content),
-			FileSize: proto.Int64(int64(len(content))),
-		}
-		hashkey, err := hash.SHA256Proto(blob)
-		if err != nil {
-			b.Fatal(err)
-		}
-		inputs = append(inputs, &gomapb.ExecReq_Input{
-			HashKey:  proto.String(hashkey),
-			Filename: proto.String(fmt.Sprintf("input_%d", i)),
-			Content:  blob,
-		})
+		inputs = append(inputs, makeInput(b, fmt.Sprintf("content %d", i), fmt.Sprintf("input_%d", i)))
 	}
 	gi := &fakeGomaInput{}
 	gi.setInputs(inputs)

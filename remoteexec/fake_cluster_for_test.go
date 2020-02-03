@@ -172,14 +172,15 @@ func (f *fakeCluster) setup(ctx context.Context, instancePrefix string) error {
 	defers = append(defers, func() { f.fconn.Close() })
 
 	f.adapter = Adapter{
-		InstancePrefix:        instancePrefix,
-		ExecTimeout:           10 * time.Second,
-		Client:                Client{ClientConn: f.conn},
-		GomaFile:              fpb.NewFileServiceClient(f.fconn),
-		DigestCache:           digest.NewCache(&f.redis),
-		CmdStorage:            &f.cmdStorage,
-		ToolDetails:           &rpb.ToolDetails{},
-		FileLookupConcurrency: 2,
+		InstancePrefix:    instancePrefix,
+		ExecTimeout:       10 * time.Second,
+		Client:            Client{ClientConn: f.conn},
+		GomaFile:          fpb.NewFileServiceClient(f.fconn),
+		DigestCache:       digest.NewCache(&f.redis),
+		CmdStorage:        &f.cmdStorage,
+		ToolDetails:       &rpb.ToolDetails{},
+		FileLookupSema:    make(chan struct{}, 2),
+		CASBlobLookupSema: make(chan struct{}, 2),
 	}
 
 	defers = nil

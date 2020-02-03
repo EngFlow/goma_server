@@ -37,7 +37,7 @@ func parseTarget(t string) (target, error) {
 	}
 	i := len(tokens) - 1
 	switch tokens[i] {
-	case "eabi", "gnu", "gnueabi", "macho", "android", "androideabi", "uclibc", "msvc":
+	case "eabi", "gnu", "gnueabi", "gnueabihf", "macho", "android", "androideabi", "uclibc", "msvc":
 		env = tokens[i]
 		i--
 	}

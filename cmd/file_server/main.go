@@ -38,7 +38,8 @@ var (
 	cacheAddr = flag.String("file-cache-addr", "", "cache server address")
 	bucket    = flag.String("bucket", "", "backing store bucket")
 
-	traceProjectID     = flag.String("trace-project-id", "", "project id for cloud tracing")
+	traceProjectID = flag.String("trace-project-id", "", "project id for cloud tracing")
+
 	serviceAccountFile = flag.String("service-account-file", "", "service account json file")
 )
 
@@ -74,9 +75,8 @@ func main() {
 	if err != nil {
 		logger.Fatal(err)
 	}
-
 	trace.ApplyConfig(trace.Config{
-		DefaultSampler: server.NewRemoteSampler(true, trace.NeverSample()),
+		DefaultSampler: server.NewLimitedSampler(server.DefaultTraceFraction, server.DefaultTraceQPS),
 	})
 
 	s, err := server.NewGRPC(*port,

@@ -20,7 +20,10 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
 	tspb "github.com/golang/protobuf/ptypes/timestamp"
+	"go.opencensus.io/stats"
+	"go.opencensus.io/tag"
 	"go.opencensus.io/trace"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -236,17 +239,113 @@ func changeSymlinkAbsToRel(e merkletree.Entry) (merkletree.Entry, error) {
 	return e, nil
 }
 
+type gomaInputInterface interface {
+	toDigest(context.Context, *gomapb.ExecReq_Input) (digest.Data, error)
+	upload(context.Context, []*gomapb.FileBlob) ([]string, error)
+}
+
+func uploadInputFiles(ctx context.Context, inputs []*gomapb.ExecReq_Input, gi gomaInputInterface, sema chan struct{}) error {
+	count := 0
+	size := 0
+	batchLimit := 500
+	sizeLimit := 10 * 1024 * 1024
+
+	beginOffset := 0
+	hashKeys := make([]string, len(inputs))
+
+	eg, ctx := errgroup.WithContext(ctx)
+
+	for i, input := range inputs {
+		count++
+		size += len(input.Content.Content)
+
+		// Upload a bunch of file blobs if one of the following:
+		// - inputs[uploadBegin:i] reached the upload blob count limit
+		// - inputs[uploadBegin:i] exceeds the upload blob size limit
+		// - we are on the last blob to be uploaded
+		if count < batchLimit && size < sizeLimit && i < len(inputs)-1 {
+			continue
+		}
+
+		inputs := inputs[beginOffset : i+1]
+		results := hashKeys[beginOffset : i+1]
+		eg.Go(func() error {
+			sema <- struct{}{}
+			defer func() {
+				<-sema
+			}()
+
+			contents := make([]*gomapb.FileBlob, len(inputs))
+			for i, input := range inputs {
+				contents[i] = input.Content
+			}
+
+			var hks []string
+			var err error
+			err = rpc.Retry{}.Do(ctx, func() error {
+				hks, err = gi.upload(ctx, contents)
+				return err
+			})
+
+			if err != nil {
+				return fmt.Errorf("setup %s input error: %v", inputs[0].GetFilename(), err)
+			}
+			if len(hks) != len(contents) {
+				return fmt.Errorf("invalid number of hash keys: %d, want %d", len(hks), len(contents))
+			}
+			for i, hk := range hks {
+				input := inputs[i]
+				if input.GetHashKey() != hk {
+					return fmt.Errorf("hashkey missmatch: embedded input %s %s != %s", input.GetFilename(), input.GetHashKey(), hk)
+				}
+				results[i] = hk
+			}
+			return nil
+		})
+		beginOffset = i + 1
+		count = 0
+		size = 0
+	}
+
+	defer func() {
+		maxOutputSize := len(inputs)
+		if maxOutputSize > 10 {
+			maxOutputSize = 10
+		}
+		successfulUploadsMsg := make([]string, 0, maxOutputSize+1)
+		for i, input := range inputs {
+			if len(hashKeys[i]) == 0 {
+				continue
+			}
+			if i == maxOutputSize && i < len(inputs)-1 {
+				successfulUploadsMsg = append(successfulUploadsMsg, "...")
+				break
+			}
+			successfulUploadsMsg = append(successfulUploadsMsg, fmt.Sprintf("%s -> %s", input.GetFilename(), hashKeys[i]))
+		}
+		logger := log.FromContext(ctx)
+		logger.Infof("embedded inputs: %v", successfulUploadsMsg)
+
+		numSuccessfulUploads := 0
+		for _, hk := range hashKeys {
+			if len(hk) > 0 {
+				numSuccessfulUploads++
+			}
+		}
+		if numSuccessfulUploads < len(inputs) {
+			logger.Errorf("%d file blobs successfully uploaded, out of %d", numSuccessfulUploads, len(inputs))
+		}
+	}()
+
+	return eg.Wait()
+}
+
 type inputFileResult struct {
 	missingInput  string
 	missingReason string
 	file          merkletree.Entry
 	uploaded      bool
 	err           error
-}
-
-type gomaInputInterface interface {
-	toDigest(context.Context, *gomapb.ExecReq_Input) (digest.Data, error)
-	upload(context.Context, *gomapb.FileBlob) (string, error)
 }
 
 func inputFiles(ctx context.Context, inputs []*gomapb.ExecReq_Input, gi gomaInputInterface, rootRel func(string) (string, error), executableInputs map[string]bool, sema chan struct{}) []inputFileResult {
@@ -258,7 +357,7 @@ func inputFiles(ctx context.Context, inputs []*gomapb.ExecReq_Input, gi gomaInpu
 	results := make([]inputFileResult, len(inputs))
 	for i, input := range inputs {
 		wg.Add(1)
-		go func(index int, input *gomapb.ExecReq_Input) {
+		go func(input *gomapb.ExecReq_Input, result *inputFileResult) {
 			defer wg.Done()
 			sema <- struct{}{}
 			defer func() {
@@ -271,18 +370,14 @@ func inputFiles(ctx context.Context, inputs []*gomapb.ExecReq_Input, gi gomaInpu
 					logger.Warnf("filename %s: %v", input.GetFilename(), err)
 					return
 				}
-				results[index] = inputFileResult{
-					err: fmt.Errorf("input file: %s %v", input.GetFilename(), err),
-				}
+				result.err = fmt.Errorf("input file: %s %v", input.GetFilename(), err)
 				return
 			}
 
 			data, err := gi.toDigest(ctx, input)
 			if err != nil {
-				results[index] = inputFileResult{
-					missingInput:  input.GetFilename(),
-					missingReason: fmt.Sprintf("input: %v", err),
-				}
+				result.missingInput = input.GetFilename()
+				result.missingReason = fmt.Sprintf("input: %v", err)
 				return
 			}
 			file := merkletree.Entry{
@@ -293,33 +388,15 @@ func inputFiles(ctx context.Context, inputs []*gomapb.ExecReq_Input, gi gomaInpu
 				},
 				IsExecutable: executableInputs[input.GetFilename()],
 			}
+			result.file = file
 			if input.Content == nil {
-				results[index] = inputFileResult{
-					file: file,
-				}
 				return
 			}
-			results[index] = inputFileResult{
-				file:     file,
-				uploaded: true,
-			}
-			var hk string
-			err = rpc.Retry{}.Do(ctx, func() error {
-				hk, err = gi.upload(ctx, input.Content)
-				return err
-			})
-			if err != nil {
-				logger.Errorf("setup %d %s input error: %v", index, input.GetFilename(), err)
-				return
-			}
-			if input.GetHashKey() != hk {
-				logger.Errorf("hashkey missmatch: embedded input %s %s != %s", input.GetFilename(), input.GetHashKey(), hk)
-				return
-			}
-			logger.Infof("embedded input %s %s", input.GetFilename(), hk)
-		}(i, input)
+			result.uploaded = true
+		}(input, &results[i])
 	}
 	wg.Wait()
+
 	return results
 }
 
@@ -382,23 +459,32 @@ func (r *request) newInputTree(ctx context.Context) *gomapb.ExecResp {
 	cleanCWD := r.filepath.Clean(r.gomaReq.GetCwd())
 	cleanRootDir := r.filepath.Clean(r.tree.RootDir())
 
-	concurrent := r.f.FileLookupConcurrency
-	if concurrent == 0 {
-		concurrent = 1
-	}
-	sema := make(chan struct{}, concurrent)
-
-	results := inputFiles(ctx, r.gomaReq.Input, gomaInput{
+	gi := gomaInput{
 		gomaFile:    r.f.GomaFile,
 		digestCache: r.f.DigestCache,
-	}, func(filename string) (string, error) {
+	}
+	results := inputFiles(ctx, r.gomaReq.Input, gi, func(filename string) (string, error) {
 		return rootRel(r.filepath, filename, cleanCWD, cleanRootDir)
-	}, executableInputs, sema)
+	}, executableInputs, r.f.FileLookupSema)
 	for _, result := range results {
 		if result.err != nil {
 			r.err = result.err
 			return nil
 		}
+	}
+
+	uploads := make([]*gomapb.ExecReq_Input, 0, len(r.gomaReq.Input))
+	for i, input := range r.gomaReq.Input {
+		result := &results[i]
+		if result.uploaded {
+			uploads = append(uploads, input)
+		}
+	}
+
+	err = uploadInputFiles(ctx, uploads, gi, r.f.FileLookupSema)
+	if err != nil {
+		r.err = err
+		return nil
 	}
 
 	var uploaded int
@@ -523,24 +609,38 @@ func (r *request) newInputTree(ctx context.Context) *gomapb.ExecResp {
 	return nil
 }
 
+type wrapperType int
+
 const (
-	wrapperScript = `#!/bin/bash
+	wrapperCwdAgnostic wrapperType = iota
+	wrapperBindMount
+	wrapperNsjailChroot
+	wrapperWin
+)
+
+func (w wrapperType) String() string {
+	switch w {
+	case wrapperCwdAgnostic:
+		return "wrapper-cwd-agnostic"
+	case wrapperBindMount:
+		return "wrapper-bind-mount"
+	case wrapperNsjailChroot:
+		return "wrapper-nsjail-chroot"
+	case wrapperWin:
+		return "wrapper-win"
+	default:
+		return fmt.Sprintf("wrapper-unknown-%d", int(w))
+	}
+}
+
+const (
+	bindMountWrapperScript = `#!/bin/bash
 # run command (i.e. "$@") at the same dir as user.
 #  INPUT_ROOT_DIR: expected directory of input root.
 #    input root is current directory to run this script.
 #    need to mount input root on $INPUT_ROOT_DIR.
 #  WORK_DIR: working directory relative to INPUT_ROOT_DIR.
 #    command will run at $INPUT_ROOT_DIR/$WORK_DIR.
-#
-# by default, it runs in sibling docker (for Cloud RBE).
-#  with the same uid
-#  with current directory (input root) mounted as same path as user's input root
-#  with the same working directory as user
-#  with the same container image
-#  to run the command line as user requested.
-#
-# if /opt/goma/bin/run-at-dir.sh exists in contianer image, use it instead.
-# http://b/132742952
 set -e
 
 # check inputs.
@@ -560,37 +660,12 @@ if [[ -x /opt/goma/bin/run-at-dir.sh ]]; then
   exit 1
 fi
 
-## get container id
-containerid="$(basename "$(cat /proc/self/cpuset)")"
-
-## get image url from current container.
-image="$(docker inspect --format '{{.Config.Image}}' "$containerid")"
-
-
-## get volume source dir for this directory.
-set +e  # docker inspect might fails, depending on client version.
-rundir="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "'"$(pwd)"'"}}{{.Source}}{{end -}}{{end}}' "$containerid" 2>/dev/null)"
-if [[ "$rundir" = "" ]]; then
-  # for legacy docker client
-  rundir="$(docker inspect --format '{{index .Volumes "'"$(pwd)"'"}}' "$containerid")"
-fi
-set -e
-if [[ "$rundir" = "" ]]; then
-  echo "error: failed to detect volume source dir" >&2
-  docker version
-  exit 1
-fi
-
-# TODO: use PWD instead of INPUT_ROOT_DIR if appricable.
-
-docker run \
- -u "$(id -u)" \
- --volume "${rundir}:${INPUT_ROOT_DIR}" \
- --workdir "${INPUT_ROOT_DIR}/${WORK_DIR}" \
- --env-file "${WORK_DIR}/env_file_for_docker" \
- --rm \
- "$image" \
- "$@"
+mkdir -p "${INPUT_ROOT_DIR}" || true # require root
+mount --bind "$(pwd)" "${INPUT_ROOT_DIR}" # require privileged
+cd "${INPUT_ROOT_DIR}/${WORK_DIR}"
+# TODO: run as normal user, not as root.
+# run as nobody will fail with "unable to open output file. permission denied"
+"$@"
 `
 
 	cwdAgnosticWrapperScript = `#!/bin/bash
@@ -633,67 +708,86 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 	args := buildArgs(ctx, cmdConfig, argv0, r.gomaReq)
 	// TODO: only allow whitelisted envs.
 
+	wt := wrapperCwdAgnostic
 	pathType := cmdConfig.GetCmdDescriptor().GetSetup().GetPathType()
-	const posixWrapperName = "run.sh"
 	switch pathType {
 	case cmdpb.CmdDescriptor_POSIX:
 		if r.needChroot {
-			logger.Infof("run with chroot")
-			// needed for bind mount.
-			r.addPlatformProperty(ctx, "dockerPrivileged", "true")
-			// needed for chroot command and mount command.
-			r.addPlatformProperty(ctx, "dockerRunAsRoot", "true")
-			nsjailCfg := nsjailConfig(cwd, r.filepath, r.gomaReq.GetToolchainSpecs(), r.gomaReq.Env)
-			files = []fileDesc{
-				{
-					name:         posixWrapperName,
-					data:         digest.Bytes("nsjail-run-wrapper-script", []byte(nsjailRunWrapperScript)),
-					isExecutable: true,
-				},
-				{
-					name: "nsjail.cfg",
-					data: digest.Bytes("nsjail-config-file", []byte(nsjailCfg)),
-				},
-			}
+			wt = wrapperNsjailChroot
 		} else {
 			err = cwdAgnosticReq(ctx, cmdConfig, r.filepath, r.gomaReq.Arg, r.gomaReq.Env)
 			if err != nil {
+				wt = wrapperBindMount
 				logger.Infof("non cwd agnostic: %v", err)
-				envs = append(envs, fmt.Sprintf("INPUT_ROOT_DIR=%s", r.tree.RootDir()))
-
-				r.addPlatformProperty(ctx, "dockerSiblingContainers", "true")
-				files = []fileDesc{
-					{
-						name:         posixWrapperName,
-						data:         digest.Bytes("wrapper-script", []byte(wrapperScript)),
-						isExecutable: true,
-					},
-					{
-						name: "env_file_for_docker",
-						data: digest.Bytes("envfile", []byte(strings.Join(r.gomaReq.Env, "\n"))),
-					},
-				}
-			} else {
-				logger.Infof("cwd agnostic")
-				for _, e := range r.gomaReq.Env {
-					if strings.HasPrefix(e, "PWD=") {
-						// PWD is usually absolute path.
-						// if cwd agnostic, then we should remove
-						// PWD environment variable.
-						continue
-					}
-					envs = append(envs, e)
-				}
-				files = []fileDesc{
-					{
-						name:         posixWrapperName,
-						data:         digest.Bytes("cwd-agnostic-wrapper-script", []byte(cwdAgnosticWrapperScript)),
-						isExecutable: true,
-					},
-				}
 			}
 		}
 	case cmdpb.CmdDescriptor_WINDOWS:
+		wt = wrapperWin
+	default:
+		return fmt.Errorf("bad path type: %v", pathType)
+	}
+
+	const posixWrapperName = "run.sh"
+	switch wt {
+	case wrapperNsjailChroot:
+		logger.Infof("run with nsjail chroot")
+		// needed for bind mount.
+		r.addPlatformProperty(ctx, "dockerPrivileged", "true")
+		// needed for chroot command and mount command.
+		r.addPlatformProperty(ctx, "dockerRunAsRoot", "true")
+		nsjailCfg := nsjailConfig(cwd, r.filepath, r.gomaReq.GetToolchainSpecs(), r.gomaReq.Env)
+		files = []fileDesc{
+			{
+				name:         posixWrapperName,
+				data:         digest.Bytes("nsjail-run-wrapper-script", []byte(nsjailRunWrapperScript)),
+				isExecutable: true,
+			},
+			{
+				name: "nsjail.cfg",
+				data: digest.Bytes("nsjail-config-file", []byte(nsjailCfg)),
+			},
+		}
+	case wrapperBindMount:
+		logger.Infof("run with bind mount")
+		envs = append(envs, fmt.Sprintf("INPUT_ROOT_DIR=%s", r.tree.RootDir()))
+		// needed for nsjail (bind mount).
+		// https://cloud.google.com/remote-build-execution/docs/remote-execution-properties#container_properties
+		// dockerAddCapabilities=SYS_ADMIN is not sufficient.
+		// need -security-opt=apparmor:unconfined too?
+		// https://github.com/moby/moby/issues/16429
+		r.addPlatformProperty(ctx, "dockerPrivileged", "true")
+		// needed for mkdir $INPUT_ROOT_DIR
+		r.addPlatformProperty(ctx, "dockerRunAsRoot", "true")
+		for _, e := range r.gomaReq.Env {
+			envs = append(envs, e)
+		}
+		files = []fileDesc{
+			{
+				name:         posixWrapperName,
+				data:         digest.Bytes("nsjail-bind-mount-wrapper-script", []byte(bindMountWrapperScript)),
+				isExecutable: true,
+			},
+		}
+	case wrapperCwdAgnostic:
+		logger.Infof("run with chdir: cwd agnostic")
+		for _, e := range r.gomaReq.Env {
+			if strings.HasPrefix(e, "PWD=") {
+				// PWD is usually absolute path.
+				// if cwd agnostic, then we should remove
+				// PWD environment variable.
+				continue
+			}
+			envs = append(envs, e)
+		}
+		files = []fileDesc{
+			{
+				name:         posixWrapperName,
+				data:         digest.Bytes("cwd-agnostic-wrapper-script", []byte(cwdAgnosticWrapperScript)),
+				isExecutable: true,
+			},
+		}
+	case wrapperWin:
+		logger.Infof("run on win")
 		wn, data, err := wrapperForWindows(ctx)
 		if err != nil {
 			return err
@@ -705,9 +799,8 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 				isExecutable: true,
 			},
 		}
-
 	default:
-		return fmt.Errorf("bad path type: %v", pathType)
+		return fmt.Errorf("bad wrapper type: %v", wt)
 	}
 
 	// Only the first one is called in the command line via storing
@@ -739,6 +832,11 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 		wrapperPath = "./" + posixWrapperName
 	}
 	r.args = append([]string{wrapperPath}, args...)
+
+	err = stats.RecordWithTags(ctx, []tag.Mutator{tag.Upsert(wrapperTypeKey, wt.String())}, wrapperCount.M(1))
+	if err != nil {
+		logger.Errorf("record wrapper-count %s: %v", wt, err)
+	}
 	return nil
 }
 
@@ -775,8 +873,13 @@ func cwdAgnosticReq(ctx context.Context, cmdConfig *cmdpb.Config, filepath clien
 		return gccCwdAgnostic(filepath, args, envs)
 	case "clang-cl":
 		return clangclCwdAgnostic(args, envs)
+	case "javac":
+		// Currently, javac in Chromium is fully cwd agnostic. Simpler just to
+		// support only the cwd agnostic case and let it fail if the client passed
+		// in invalid absolute paths.
+		return nil
 	default:
-		// "cl.exe", "javac", "clang-tidy"
+		// "cl.exe", "clang-tidy"
 		return fmt.Errorf("no cwd agnostic check for %s", name)
 	}
 }
@@ -922,9 +1025,9 @@ func (r *request) checkCache(ctx context.Context) (*rpb.ActionResult, bool) {
 	return resp, true
 }
 
-func (r *request) missingBlobs(ctx context.Context) []*rpb.Digest {
+func (r *request) missingBlobs(ctx context.Context) ([]*rpb.Digest, error) {
 	if r.err != nil {
-		return nil
+		return nil, r.err
 	}
 	var blobs []*rpb.Digest
 	err := rpc.Retry{}.Do(ctx, func() error {
@@ -934,9 +1037,9 @@ func (r *request) missingBlobs(ctx context.Context) []*rpb.Digest {
 	})
 	if err != nil {
 		r.err = err
-		return nil
+		return nil, err
 	}
-	return blobs
+	return blobs, nil
 }
 
 func inputForDigest(ds *digest.Store, d *rpb.Digest) (string, error) {
@@ -1006,11 +1109,11 @@ func logFileList(logger log.Logger, msg string, files []string) {
 	}
 }
 
-func (r *request) uploadBlobs(ctx context.Context, blobs []*rpb.Digest) *gomapb.ExecResp {
+func (r *request) uploadBlobs(ctx context.Context, blobs []*rpb.Digest) (*gomapb.ExecResp, error) {
 	if r.err != nil {
-		return nil
+		return nil, r.err
 	}
-	err := r.cas.Upload(ctx, r.instanceName(), blobs...)
+	err := r.cas.Upload(ctx, r.instanceName(), r.f.CASBlobLookupSema, blobs...)
 	if err != nil {
 		if missing, ok := err.(cas.MissingError); ok {
 			logger := log.FromContext(ctx)
@@ -1031,7 +1134,7 @@ func (r *request) uploadBlobs(ctx context.Context, blobs []*rpb.Digest) *gomapb.
 				r.gomaResp.MissingReason = missingReason
 				sortMissing(r.gomaReq.Input, r.gomaResp)
 				logFileList(logger, "missing inputs", r.gomaResp.MissingInput)
-				return r.gomaResp
+				return r.gomaResp, nil
 			}
 			// failed to upload non-input, so no need to report
 			// missing input to users.
@@ -1039,7 +1142,7 @@ func (r *request) uploadBlobs(ctx context.Context, blobs []*rpb.Digest) *gomapb.
 		}
 		r.err = err
 	}
-	return nil
+	return nil, err
 }
 
 func (r *request) executeAction(ctx context.Context) (*rpb.ExecuteResponse, error) {

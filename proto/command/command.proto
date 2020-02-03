@@ -167,6 +167,7 @@ message RemoteexecPlatform {
   string rbe_instance_basename = 2;
 
   // Set true if nsjail is available in the platform image.
+  // TODO: deprecated. always requires najail on linux platform.
   bool has_nsjail = 3;
 }
 
@@ -204,7 +205,6 @@ message RuntimeConfig {
   // the following files will be detected in this name directory in the bucket:
   //   seq
   //   <prebuilt-item>/descriptors/<descriptorHash>
-  //   remoteexec-platform/<property-name>
   string name = 1;
 
   // service address for the runtime. i.e. RBE address.
@@ -219,10 +219,8 @@ message RuntimeConfig {
   reserved 7;
   reserved "rbe_instance_basename";
 
-  // Platform is a set of requirements, such as haredware, operting system
+  // Platform is a set of requirements, such as hardware, operating system
   // for RBE backend.
-  // property files stored in remoteexec-platform/ in the bucket will be
-  // merged into this.
   Platform platform = 8;
 
   // go/goma-toolchain-filter-per-cluster

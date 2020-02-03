@@ -378,17 +378,13 @@ func TestBuild(t *testing.T) {
 	checkDir(ctx, t, ds, baseDir, "debug",
 		[]string{"debugger.cc"},
 		nil, nil)
-	// empty dir will have .keep_me file.
-	// TODO: remove this when b/71495874 is fixed.
 	checkDir(ctx, t, ds, baseDir, "test",
-		[]string{".keep_me"},
-		nil, nil)
+		nil, nil, nil)
 
 	outDir := checkDir(ctx, t, ds, dir, "out", nil, []string{"Release"}, nil)
 	releaseDir := checkDir(ctx, t, ds, outDir, "Release", nil, []string{"obj"}, nil)
 	objDir := checkDir(ctx, t, ds, releaseDir, "obj", nil, []string{"base"}, nil)
-	// TODO: make nil instead of []string{".keep_me"} when b/71495874 is fixed.
-	checkDir(ctx, t, ds, objDir, "base", []string{".keep_me"}, nil, nil)
+	checkDir(ctx, t, ds, objDir, "base", nil, nil, nil)
 
 	tpDir := checkDir(ctx, t, ds, dir, "third_party", nil, []string{"llvm-build", "skia"}, nil)
 	llvmDir := checkDir(ctx, t, ds, tpDir, "llvm-build", nil, []string{"Release+Asserts"}, nil)

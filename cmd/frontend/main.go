@@ -59,10 +59,6 @@ var (
 	traceProjectID = flag.String("trace-project-id", "", "project id for cloud tracing")
 
 	serviceAccountFile = flag.String("service-account-file", "", "service account json file")
-	traceFraction      = flag.Float64("trace-sampling-fraction", 1.0, "sampling fraction for stackdriver trace")
-	// trace API limit is 4800/minutes.
-	// 4800/60/(total number of frontend replicas in the project)
-	traceQPS = flag.Float64("trace-sampling-qps-limit", 0.2, "sampling qps limit for stackdrvier trace")
 
 	memoryMargin = flag.String("memory-margin",
 		k8sapi.NewQuantity(maxMsgSize, k8sapi.BinarySI).String(),
@@ -136,7 +132,7 @@ func main() {
 		logger.Fatal(err)
 	}
 	trace.ApplyConfig(trace.Config{
-		DefaultSampler: server.NewLimitedSampler(*traceFraction, *traceQPS),
+		DefaultSampler: server.NewLimitedSampler(server.DefaultTraceFraction, server.DefaultTraceQPS),
 	})
 
 	s, err := server.NewGRPC(*gport,

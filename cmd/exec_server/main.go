@@ -52,11 +52,13 @@ import (
 )
 
 var (
-	port         = flag.Int("port", 5050, "rpc port")
-	mport        = flag.Int("mport", 8081, "monitor port")
-	fileAddr     = flag.String("file-addr", "passthrough:///file-server:5050", "file server address")
-	configMapURI = flag.String("configmap_uri", "", "configmap uri. e.g. gs://$project-toolchain-config/$name.config, text proto of command.ConfigMap.")
-	configMap    = flag.String("configmap", "", "configmap text proto")
+	port                  = flag.Int("port", 5050, "rpc port")
+	mport                 = flag.Int("mport", 8081, "monitor port")
+	fileAddr              = flag.String("file-addr", "passthrough:///file-server:5050", "file server address")
+	configMapURI          = flag.String("configmap_uri", "", "deprecated: configmap uri. e.g. gs://$project-toolchain-config/$name.config, text proto of command.ConfigMap.")
+	configMap             = flag.String("configmap", "", "configmap text proto")
+	toolchainConfigBucket = flag.String("toolchain-config-bucket", "", "cloud storage bucket for toolchain config")
+	configMapFile         = flag.String("configmap_file", "", "filename for configmap text proto")
 
 	traceProjectID     = flag.String("trace-project-id", "", "project id for cloud tracing")
 	pubsubProjectID    = flag.String("pubsub-project-id", "", "project id for pubsub")
@@ -67,7 +69,7 @@ var (
 	cmdFilesBucket       = flag.String("cmd-files-bucket", "", "cloud storage bucket for command binary files")
 
 	// Needed for b/120582303, but will be deprecated by b/80508682.
-	fileLookupConcurrency = flag.Int("file-lookup-concurrency", 5, "concurrency to look up files from file-server")
+	fileLookupConcurrency = flag.Int("file-lookup-concurrency", 20, "concurrency to look up files from file-server")
 )
 
 var (
@@ -166,7 +168,7 @@ type configServer struct {
 	cancel    func()
 }
 
-func newConfigServer(ctx context.Context, inventory *exec.Inventory, uri string, gsclient *storage.Client, opts ...option.ClientOption) (*configServer, error) {
+func newConfigServer(ctx context.Context, inventory *exec.Inventory, bucket, configMapFile string, cm *cmdpb.ConfigMap, gsclient *storage.Client, opts ...option.ClientOption) (*configServer, error) {
 	cs := &configServer{
 		inventory: inventory,
 	}
@@ -182,7 +184,9 @@ func newConfigServer(ctx context.Context, inventory *exec.Inventory, uri string,
 		return nil, fmt.Errorf("pubsub client failed: %v", err)
 	}
 	cs.configmap = command.ConfigMapBucket{
-		URI:            uri,
+		URI:            fmt.Sprintf("gs://%s/", bucket),
+		ConfigMap:      cm,
+		ConfigMapFile:  configMapFile,
 		StorageClient:  stiface.AdaptClient(gsclient),
 		PubsubClient:   cs.psclient,
 		SubscriberID:   fmt.Sprintf("toolchain-config-%s-%s", server.ClusterName(ctx), server.HostName(ctx)),
@@ -270,8 +274,8 @@ func main() {
 	logger := log.FromContext(ctx)
 	defer logger.Sync()
 
-	if *configMapURI == "" && *configMap == "" {
-		logger.Fatalf("--configmap_uri or --configmap must be given")
+	if (*toolchainConfigBucket == "" || *configMapFile == "") && *configMap == "" {
+		logger.Fatalf("--toolchain-config-bucket,--configmap_file or --configmap must be given")
 	}
 	if *remoteexecAddr == "" {
 		logger.Fatalf("--remoteexec-addr must be given")
@@ -299,7 +303,7 @@ func main() {
 		logger.Fatal(err)
 	}
 	trace.ApplyConfig(trace.Config{
-		DefaultSampler: server.NewRemoteSampler(true, trace.NeverSample()),
+		DefaultSampler: server.NewLimitedSampler(server.DefaultTraceFraction, server.DefaultTraceQPS),
 	})
 
 	s, err := server.NewGRPC(*port,
@@ -317,8 +321,8 @@ func main() {
 
 	var gsclient *storage.Client
 	var opts []option.ClientOption
-	if *configMapURI != "" || *cmdFilesBucket != "" {
-		logger.Infof("configmap_uri or cmd-files-bucket is specified. use cloud storage")
+	if *toolchainConfigBucket != "" || *cmdFilesBucket != "" {
+		logger.Infof("toolchain-config-bucket or cmd-files-bucket is specified. use cloud storage")
 		if *serviceAccountFile != "" {
 			opts = append(opts, option.WithServiceAccountFile(*serviceAccountFile))
 		}
@@ -344,6 +348,10 @@ func main() {
 		logger.Fatalf("--remote-instance-prefix must be given for remoteexec API")
 	}
 
+	if *fileLookupConcurrency == 0 {
+		*fileLookupConcurrency = 1
+	}
+	casBlobLookupConcurrency := 20
 	re := &remoteexec.Adapter{
 		InstancePrefix: *remoteInstancePrefix,
 		ExecTimeout:    15 * time.Minute,
@@ -356,7 +364,8 @@ func main() {
 			ToolName:    "goma/exec-server",
 			ToolVersion: "0.0.0-experimental",
 		},
-		FileLookupConcurrency: *fileLookupConcurrency,
+		FileLookupSema:    make(chan struct{}, *fileLookupConcurrency),
+		CASBlobLookupSema: make(chan struct{}, casBlobLookupConcurrency),
 	}
 
 	if *cmdFilesBucket == "" {
@@ -400,8 +409,16 @@ func main() {
 		}()
 		confServer = nullServer{ch: make(chan error)}
 
-	case *configMapURI != "":
-		cs, err := newConfigServer(ctx, inventory, *configMapURI, gsclient, opts...)
+	case *toolchainConfigBucket != "":
+		cm := &cmdpb.ConfigMap{}
+		if *configMap != "" {
+			err := proto.UnmarshalText(*configMap, cm)
+			if err != nil {
+				ready <- fmt.Errorf("parse configmap %q: %v", *configMap, err)
+				return
+			}
+		}
+		cs, err := newConfigServer(ctx, inventory, *toolchainConfigBucket, *configMapFile, cm, gsclient, opts...)
 		if err != nil {
 			logger.Fatalf("configServer: %v", err)
 		}

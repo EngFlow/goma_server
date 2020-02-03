@@ -211,22 +211,6 @@ func (m *MerkleTree) Build(ctx context.Context) (*rpb.Digest, error) {
 // buildtree builds tree at curdir, which is located as dirname.
 func (m *MerkleTree) buildTree(ctx context.Context, curdir *rpb.Directory, dirname string) (*rpb.Digest, error) {
 	logger := log.FromContext(ctx)
-	// FIXME: this is workaround for b/71495874
-	if len(curdir.Files) == 0 && len(curdir.Symlinks) == 0 && len(curdir.Directories) == 0 {
-		// empty dir.
-		// foundry doesn't create empty directory.
-		// http://b/80406381
-		// but, there is case that empty directory must exist
-		// http://b/80279190
-		// to workaround this put dummy file to make sure empty dir
-		// is created.
-		emptyFile := digest.Bytes("empty file", nil)
-		m.store.Set(emptyFile)
-		curdir.Files = append(curdir.Files, &rpb.FileNode{
-			Name:   ".keep_me",
-			Digest: emptyFile.Digest(),
-		})
-	}
 	// directory should not have duplicate name.
 	// http://b/124693412
 	names := map[string]proto.Message{}
@@ -258,7 +242,7 @@ func (m *MerkleTree) buildTree(ctx context.Context, curdir *rpb.Directory, dirna
 			if !proto.Equal(s, p) {
 				return nil, fmt.Errorf("duplicate symlink %s in %s: %s != %s", s.Name, dirname, s, p)
 			}
-			logger.Errorf("duplicate symlink %s in %s: %s", s.Name, dirname, s)
+			logger.Infof("duplicate symlink %s in %s: %s", s.Name, dirname, s)
 			continue
 		}
 		names[s.Name] = s
@@ -287,7 +271,7 @@ func (m *MerkleTree) buildTree(ctx context.Context, curdir *rpb.Directory, dirna
 			if !proto.Equal(subdir, p) {
 				return nil, fmt.Errorf("duplicate dir %s in %s: %s != %s", subdir.Name, dirname, subdir, p)
 			}
-			logger.Errorf("duplicate dir %s in %s: %s", subdir.Name, dirname, subdir)
+			logger.Infof("duplicate dir %s in %s: %s", subdir.Name, dirname, subdir)
 			continue
 		}
 		names[subdir.Name] = subdir

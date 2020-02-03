@@ -46,7 +46,7 @@ func main() {
 		logger.Fatal(err)
 	}
 	trace.ApplyConfig(trace.Config{
-		DefaultSampler: server.NewRemoteSampler(true, trace.NeverSample()),
+		DefaultSampler: server.NewLimitedSampler(server.DefaultTraceFraction, server.DefaultTraceQPS),
 	})
 
 	s, err := server.NewGRPC(*port,
