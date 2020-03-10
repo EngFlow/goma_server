@@ -111,11 +111,12 @@ func gccCwdAgnostic(filepath clientFilePath, args, envs []string) error {
 		case strings.HasPrefix(arg, "-std"):
 		case strings.HasPrefix(arg, "--param="):
 		case arg == "-MMD" || arg == "-MD" || arg == "-M":
+		case arg == "-Qunused-arguments":
 			continue
 
 		case arg == "-o":
 			pathFlag = true
-		case arg == "-I" || arg == "-B" || arg == "-isystem":
+		case arg == "-I" || arg == "-B" || arg == "-isystem" || arg == "-include":
 			pathFlag = true
 		case arg == "-MF":
 			pathFlag = true
@@ -129,6 +130,10 @@ func gccCwdAgnostic(filepath clientFilePath, args, envs []string) error {
 			}
 		case strings.HasPrefix(arg, "-isystem"):
 			if filepath.IsAbs(arg[len("-isystem"):]) {
+				return fmt.Errorf("abs path: %s", arg)
+			}
+		case strings.HasPrefix(arg, "-include="):
+			if filepath.IsAbs(arg[len("-include="):]) {
 				return fmt.Errorf("abs path: %s", arg)
 			}
 		case strings.HasPrefix(arg, "--sysroot="):

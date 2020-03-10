@@ -157,6 +157,32 @@ func TestGccCwdAgnostic(t *testing.T) {
 			cwdAgnostic: false,
 		},
 		{
+			desc: "include absolute",
+			args: append(append([]string {}, baseReleaseArgs...),
+				"-include",
+				"/b/c/b/linux/header.h"),
+			cwdAgnostic: false,
+		},
+		{
+			desc: "include relative",
+			args: append(append([]string {}, baseReleaseArgs...),
+				"-include",
+				"../b/c/b/linux/header.h"),
+			cwdAgnostic: true,
+		},
+		{
+			desc: "include= absolute",
+			args: append(append([]string {}, baseReleaseArgs...),
+				"-include=/b/c/b/linux/header.h"),
+			cwdAgnostic: false,
+		},
+		{
+			desc: "include= relative",
+			args: append(append([]string {}, baseReleaseArgs...),
+				"-include=../b/c/b/linux/header.h"),
+			cwdAgnostic: true,
+		},
+		{
 			desc: "sysroot absolute",
 			args: modifyArgs(baseReleaseArgs,
 				"--sysroot",
@@ -179,6 +205,12 @@ func TestGccCwdAgnostic(t *testing.T) {
 				"-regalloc=pbqp",
 				"-mllvm",
 				"-pbqp-coalescing"),
+			cwdAgnostic: true,
+		},
+		{
+			desc: "Qunused-arguments",
+			args: append(append([]string {}, baseReleaseArgs...),
+				"-Qunused-arguments"),
 			cwdAgnostic: true,
 		},
 	} {
