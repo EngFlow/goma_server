@@ -67,6 +67,7 @@ var (
 	serviceAccountJSON     = flag.String("service-account-json", "", "service account json, used to talk to RBE and cloud storage (if --file-cache-bucket is used)")
 	platformContainerImage = flag.String("platform-container-image", "", "docker uri of platform container image")
 	insecureRemoteexec     = flag.Bool("insecure-remoteexec", false, "insecure grpc for remoteexec API")
+	insecureSkipVerify     = flag.Bool("insecure-skip-verify", false, "insecure skip verifying the server certificate")
 
 	fileCacheBucket = flag.String("file-cache-bucket", "", "file cache bucking store bucket")
 
@@ -347,8 +348,11 @@ func main() {
 		},
 	}
 
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: *insecureSkipVerify,
+	}
 	opts := []grpc.DialOption{
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{})),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)),
 		grpc.WithStatsHandler(&ocgrpc.ClientHandler{}),
 	}
 	if *insecureRemoteexec {
