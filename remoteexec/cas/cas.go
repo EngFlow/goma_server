@@ -325,9 +325,10 @@ func (c CAS) Upload(ctx context.Context, instance string, sema chan struct{}, bl
 				return grpc.Errorf(grpc.Code(err), "batch update blobs: %v", err)
 			}
 			for _, res := range batchResp.Responses {
-				if codes.Code(res.Status.Code) != codes.OK {
+				st := status.FromProto(res.GetStatus())
+				if st.Code() != codes.OK {
 					span.Annotatef(nil, "batch update blob %v: %v", res.Digest, res.Status)
-					return grpc.Errorf(codes.Code(res.Status.Code), "batch update blob %v: %v", res.Digest, res.Status)
+					return grpc.Errorf(st.Code(), "batch update blob %v: %v", res.Digest, res.Status)
 				}
 			}
 			uploaded = true
