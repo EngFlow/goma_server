@@ -28,6 +28,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"go.chromium.org/goma/server/command/descriptor"
+	"go.chromium.org/goma/server/exec"
 	"go.chromium.org/goma/server/log"
 	gomapb "go.chromium.org/goma/server/proto/api"
 	cmdpb "go.chromium.org/goma/server/proto/command"
@@ -612,7 +613,7 @@ func (r *request) newInputTree(ctx context.Context) *gomapb.ExecResp {
 type wrapperType int
 
 const (
-	wrapperCwdAgnostic wrapperType = iota
+	wrapperRelocatable wrapperType = iota
 	wrapperBindMount
 	wrapperNsjailChroot
 	wrapperWin
@@ -620,8 +621,8 @@ const (
 
 func (w wrapperType) String() string {
 	switch w {
-	case wrapperCwdAgnostic:
-		return "wrapper-cwd-agnostic"
+	case wrapperRelocatable:
+		return "wrapper-relocatable"
 	case wrapperBindMount:
 		return "wrapper-bind-mount"
 	case wrapperNsjailChroot:
@@ -668,7 +669,7 @@ cd "${INPUT_ROOT_DIR}/${WORK_DIR}"
 "$@"
 `
 
-	cwdAgnosticWrapperScript = `#!/bin/bash
+	relocatableWrapperScript = `#!/bin/bash
 set -e
 if [[ "$WORK_DIR" != "" ]]; then
   cd "${WORK_DIR}"
@@ -708,17 +709,17 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 	args := buildArgs(ctx, cmdConfig, argv0, r.gomaReq)
 	// TODO: only allow whitelisted envs.
 
-	wt := wrapperCwdAgnostic
+	wt := wrapperRelocatable
 	pathType := cmdConfig.GetCmdDescriptor().GetSetup().GetPathType()
 	switch pathType {
 	case cmdpb.CmdDescriptor_POSIX:
 		if r.needChroot {
 			wt = wrapperNsjailChroot
 		} else {
-			err = cwdAgnosticReq(ctx, cmdConfig, r.filepath, r.gomaReq.Arg, r.gomaReq.Env)
+			err = relocatableReq(ctx, cmdConfig, r.filepath, r.gomaReq.Arg, r.gomaReq.Env)
 			if err != nil {
 				wt = wrapperBindMount
-				logger.Infof("non cwd agnostic: %v", err)
+				logger.Infof("non relocatable: %v", err)
 			}
 		}
 	case cmdpb.CmdDescriptor_WINDOWS:
@@ -768,12 +769,12 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 				isExecutable: true,
 			},
 		}
-	case wrapperCwdAgnostic:
-		logger.Infof("run with chdir: cwd agnostic")
+	case wrapperRelocatable:
+		logger.Infof("run with chdir: relocatable")
 		for _, e := range r.gomaReq.Env {
 			if strings.HasPrefix(e, "PWD=") {
 				// PWD is usually absolute path.
-				// if cwd agnostic, then we should remove
+				// if relocatable, then we should remove
 				// PWD environment variable.
 				continue
 			}
@@ -782,7 +783,7 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 		files = []fileDesc{
 			{
 				name:         posixWrapperName,
-				data:         digest.Bytes("cwd-agnostic-wrapper-script", []byte(cwdAgnosticWrapperScript)),
+				data:         digest.Bytes("relocatable-wrapper-script", []byte(relocatableWrapperScript)),
 				isExecutable: true,
 			},
 		}
@@ -866,21 +867,21 @@ func addTargetIfNotExist(args []string, target string) []string {
 	return append(args, fmt.Sprintf("--target=%s", target))
 }
 
-// cwdAgnosticReq checks args, envs is cwd agnostic, respecting cmdConfig.
-func cwdAgnosticReq(ctx context.Context, cmdConfig *cmdpb.Config, filepath clientFilePath, args, envs []string) error {
+// relocatableReq checks args, envs is relocatable, respecting cmdConfig.
+func relocatableReq(ctx context.Context, cmdConfig *cmdpb.Config, filepath clientFilePath, args, envs []string) error {
 	switch name := cmdConfig.GetCmdDescriptor().GetSelector().GetName(); name {
 	case "gcc", "g++", "clang", "clang++":
-		return gccCwdAgnostic(filepath, args, envs)
+		return gccRelocatableReq(filepath, args, envs)
 	case "clang-cl":
-		return clangclCwdAgnostic(args, envs)
+		return clangclRelocatableReq(args, envs)
 	case "javac":
-		// Currently, javac in Chromium is fully cwd agnostic. Simpler just to
-		// support only the cwd agnostic case and let it fail if the client passed
+		// Currently, javac in Chromium is fully relocatable. Simpler just to
+		// support only the relocatable case and let it fail if the client passed
 		// in invalid absolute paths.
 		return nil
 	default:
 		// "cl.exe", "clang-tidy"
-		return fmt.Errorf("no cwd agnostic check for %s", name)
+		return fmt.Errorf("no relocatable check for %s", name)
 	}
 }
 
@@ -1216,7 +1217,10 @@ func (r *request) newResp(ctx context.Context, eresp *rpb.ExecuteResponse, cache
 		timestampSub(ctx, md.GetInputFetchCompletedTimestamp(), md.GetInputFetchStartTimestamp()),
 		timestampSub(ctx, md.GetExecutionCompletedTimestamp(), md.GetExecutionStartTimestamp()),
 		timestampSub(ctx, md.GetOutputUploadCompletedTimestamp(), md.GetOutputUploadStartTimestamp()))
-
+	r.gomaResp.ExecutionStats = &gomapb.ExecutionStats{
+		ExecutionStartTimestamp:     md.GetExecutionStartTimestamp(),
+		ExecutionCompletedTimestamp: md.GetExecutionCompletedTimestamp(),
+	}
 	gout := gomaOutput{
 		gomaResp: r.gomaResp,
 		bs:       r.client.ByteStream(),
@@ -1278,11 +1282,23 @@ func (r *request) newResp(ctx context.Context, eresp *rpb.ExecuteResponse, cache
 			r.gomaResp.ErrorMessage = append(r.gomaResp.ErrorMessage, fmt.Sprintf("output path %s: %v", output.Path, err))
 			continue
 		}
-		gout.outputDirectory(ctx, r.filepath, fname, output)
+		gout.outputDirectory(ctx, r.filepath, fname, output, r.f.OutputFileSema)
 	}
 	if len(r.gomaResp.ErrorMessage) == 0 {
 		r.gomaResp.Result.ExitStatus = proto.Int32(eresp.Result.ExitCode)
 	}
+
+	sizeLimit := exec.DefaultMaxRespMsgSize
+	respSize := proto.Size(r.gomaResp)
+	if respSize > sizeLimit {
+		logger.Infof("gomaResp size=%d, limit=%d, using FileService for larger blobs.", respSize, sizeLimit)
+		if err := gout.reduceRespSize(ctx, sizeLimit, r.f.OutputFileSema); err != nil {
+			// Don't need to append any error messages to `r.gomaResp` because it won't be sent.
+			return nil, fmt.Errorf("failed to reduce resp size below limit=%d, %d -> %d: %v", sizeLimit, respSize, proto.Size(gout.gomaResp), err)
+		}
+		logger.Infof("gomaResp size reduced %d -> %d", respSize, proto.Size(gout.gomaResp))
+	}
+
 	return r.gomaResp, r.Err()
 }
 

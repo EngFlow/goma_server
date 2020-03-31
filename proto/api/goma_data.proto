@@ -1,6 +1,4 @@
-// Copyright 2010 The Goma Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+// Copyright 2010 Google LLC. All Rights Reserved.
 
 //
 // new proto definitions for goma v2
@@ -8,21 +6,29 @@
 
 syntax = "proto2";
 
+import "google/protobuf/timestamp.proto";
+
 package devtools_goma;
 
 // persistent data
 
 // hash_key = sha256(serialized FileBlob)
 //
-// for small file (< 2MB)
+// for small file (< 2MB) embedded
 //   blob_type=FILE, !has_offset(), has_content()
 //                   has_file_size(), hash_key_size() == 0
+//
 // for large file
 //   blob_type=FILE_META, !has_offset(), !has_content()
 //                   has_file_size(), hash_key_size() > 0
 //  for each hash_key(i)
 //     blob_type=FILE_CHUNK, has_offset(), has_content(),
 //                   has_file_size(), hash_key_size() == 0
+//
+// for small file (< 2MB), stored as blob_type=FILE in file server with
+// key=hash_key[0]
+//   blob_type=FILE_REF, !hash_offset(), !has_content()
+//                   has_file_size(), hash_key_size() == 1
 message FileBlob {
   enum BlobType {
     FILE_UNSPECIFIED = 0;
@@ -30,6 +36,7 @@ message FileBlob {
     FILE_META = 2;
     FILE_CHUNK = 3;
     // ARCHIVE = 4;
+    FILE_REF = 5;
   }
   required BlobType blob_type = 1;
 
@@ -183,7 +190,7 @@ message RequesterInfo {
   // e.g. "os":"linux".
   //
   // Inspired from swarming bot dimensions.
-  // https://cs.chromium.org/chromium/infra/luci/appengine/swarming/proto/bots.proto
+  // https://chromium.googlesource.com/infra/luci/luci-py/+/effbcfcafa96e0840189a98ac485586ba2c2ceb6/appengine/swarming/proto/config/bots.proto
   repeated string dimensions = 10;
 
   // Implementation Note: `WINDOWS` is defined on Win, so we have to add
@@ -295,12 +302,17 @@ message ExecReq {
   reserved 99;
 }
 
-message MultiExecReq {
-  repeated ExecReq req = 1;
+// Stats of a single RBE execution. This is a subset of
+// https://github.com/bazelbuild/remote-apis/blob/178b756a22d441d8d06873a70bcd0ef01d876467/build/bazel/remote/execution/v2/remote_execution.proto#L789-L819
+message ExecutionStats {
+  // When the worker started executing the action command.
+  optional google.protobuf.Timestamp execution_start_timestamp = 1;
 
-  optional RequesterInfo requester_info = 10;
+  // When the worker completed executing the action command.
+  optional google.protobuf.Timestamp execution_completed_timestamp = 2;
 }
 
+// NEXT ID TO USE: 82
 message ExecResp {
   enum ExecError {
     OK = 0;
@@ -368,16 +380,10 @@ message ExecResp {
   optional bool compiler_proxy_local_killed = 76;
 
   optional int32 compiler_proxy_exec_request_retry = 80;
-
+  // Execution stats collected from RBE
+  optional ExecutionStats execution_stats = 81;
   // 99 was used in experimental phase.
   reserved 99;
-}
-
-message MultiExecResp {
-  repeated group Response = 1 {
-    optional int32 response_code = 2;
-    optional ExecResp resp = 3;
-  }
 }
 
 // FileService Interface

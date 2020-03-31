@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"go.chromium.org/goma/server/file"
 	"go.chromium.org/goma/server/hash"
 	gomapb "go.chromium.org/goma/server/proto/api"
 	fpb "go.chromium.org/goma/server/proto/file"
@@ -83,28 +84,39 @@ func (gi gomaInput) upload(ctx context.Context, content []*gomapb.FileBlob) ([]s
 	return resp.HashKey, nil
 }
 
-func lookup(ctx context.Context, c lookupClient, hashKey string) (*gomapb.FileBlob, error) {
+func lookup(ctx context.Context, c lookupClient, hashKeys []string) ([]*gomapb.FileBlob, error) {
+	req := &gomapb.LookupFileReq{
+		HashKey:       hashKeys,
+		RequesterInfo: requesterInfo(ctx),
+	}
 	var resp *gomapb.LookupFileResp
 	var err error
 	err = rpc.Retry{}.Do(ctx, func() error {
-		resp, err = c.LookupFile(ctx, &gomapb.LookupFileReq{
-			HashKey: []string{
-				hashKey,
-			},
-			RequesterInfo: requesterInfo(ctx),
-		})
+		resp, err = c.LookupFile(ctx, req)
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 	if len(resp.Blob) == 0 {
-		return nil, status.Errorf(codes.NotFound, "no blob for %s", hashKey)
+		return nil, status.Errorf(codes.NotFound, "no blob for %s", hashKeys)
 	}
-	if resp.Blob[0].GetBlobType() == gomapb.FileBlob_FILE_UNSPECIFIED {
-		return nil, status.Errorf(codes.NotFound, "missing blob for %s", hashKey)
+	if len(resp.Blob) != len(hashKeys) {
+		return nil, status.Errorf(codes.Internal, "request %d (%q), got %d", len(hashKeys), hashKeys, len(resp.Blob))
 	}
-	return resp.Blob[0], nil
+	var unspecified []string
+	var blobs []*gomapb.FileBlob
+	for i, blob := range resp.Blob {
+		if blob.GetBlobType() == gomapb.FileBlob_FILE_UNSPECIFIED {
+			unspecified = append(unspecified, fmt.Sprintf("%d:%q", i, hashKeys[i]))
+			continue
+		}
+		blobs = append(blobs, blob)
+	}
+	if len(unspecified) > 0 {
+		return nil, status.Errorf(codes.NotFound, "missing blob for %s", unspecified)
+	}
+	return blobs, nil
 }
 
 type gomaInputSource struct {
@@ -122,10 +134,11 @@ func (g gomaInputSource) Open(ctx context.Context) (io.ReadCloser, error) {
 	// TODO: release g.blob
 	if blob == nil {
 		var err error
-		blob, err = lookup(ctx, g.lookupClient, g.hashKey)
+		blobs, err := lookup(ctx, g.lookupClient, []string{g.hashKey})
 		if err != nil {
 			return nil, err
 		}
+		blob = blobs[0]
 	}
 	switch blob.GetBlobType() {
 	case gomapb.FileBlob_FILE:
@@ -138,6 +151,7 @@ func (g gomaInputSource) Open(ctx context.Context) (io.ReadCloser, error) {
 			lookupClient: g.lookupClient,
 			hashKey:      g.hashKey,
 			meta:         blob,
+			allocated:    make([]byte, gomaInputBatchSize*file.FileChunkSize),
 		}, nil
 
 	case gomapb.FileBlob_FILE_UNSPECIFIED:
@@ -146,13 +160,16 @@ func (g gomaInputSource) Open(ctx context.Context) (io.ReadCloser, error) {
 	return nil, status.Errorf(codes.Internal, "bad file_blob type: %s: %v", g.hashKey, blob.GetBlobType())
 }
 
+const gomaInputBatchSize = 5
+
 type gomaInputReader struct {
 	ctx          context.Context
 	lookupClient lookupClient
 	hashKey      string
 	meta         *gomapb.FileBlob
 	i            int    // next index of hash key in meta.
-	buf          []byte // points meta hash_key[i-1]'s Content.
+	buf          []byte // points meta hash_key[prev_i:i]'s Content.
+	allocated    []byte // allocated buffer for buf.
 }
 
 func (r *gomaInputReader) Read(buf []byte) (int, error) {
@@ -160,15 +177,31 @@ func (r *gomaInputReader) Read(buf []byte) (int, error) {
 		if len(r.meta.HashKey) == r.i {
 			return 0, io.EOF
 		}
-		blob, err := lookup(r.ctx, r.lookupClient, r.meta.HashKey[r.i])
+		j := r.i + gomaInputBatchSize
+		if j > len(r.meta.HashKey) {
+			j = len(r.meta.HashKey)
+		}
+		blobs, err := lookup(r.ctx, r.lookupClient, r.meta.HashKey[r.i:j])
 		if err != nil {
-			return 0, status.Errorf(status.Code(err), "lookup chunk in FILE_META %s %d %s: %v", r.hashKey, r.i, r.meta.HashKey[r.i], err)
+			return 0, status.Errorf(status.Code(err), "lookup chunk in FILE_META %s %d:%d %s: %v", r.hashKey, r.i, j, r.meta.HashKey[r.i:j], err)
 		}
-		if blob.GetBlobType() != gomapb.FileBlob_FILE_CHUNK {
-			return 0, status.Errorf(codes.Internal, "lookup chunk in FILE_META %s %d %s: not FILE_CHUNK %v", r.hashKey, r.i, r.meta.HashKey[r.i], blob.GetBlobType())
+		for i, blob := range blobs {
+			if blob.GetBlobType() != gomapb.FileBlob_FILE_CHUNK {
+				return 0, status.Errorf(codes.Internal, "lookup chunk in FILE_META %s %d %s: not FILE_CHUNK %v", r.hashKey, r.i+i, r.meta.HashKey[r.i+i], blob.GetBlobType())
+			}
 		}
-		r.i++
-		r.buf = blob.Content
+		b := r.allocated
+		pos := 0
+		i0 := r.i
+		r.i = j
+		for i, blob := range blobs {
+			n := copy(b[pos:], blob.Content)
+			if n < len(blob.Content) {
+				return 0, status.Errorf(codes.Internal, "goma input buffer shortage %d written, len(blob.Content)=%d for %s %d %s", n, len(blob.Content), r.hashKey, i0+i, r.meta.HashKey[i0+i])
+			}
+			pos += n
+		}
+		r.buf = b[:pos]
 	}
 	n := copy(buf, r.buf)
 	r.buf = r.buf[n:]

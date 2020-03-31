@@ -103,6 +103,43 @@ func (e MissingError) Error() string {
 	return fmt.Sprintf("missing %d blobs", len(e.Blobs))
 }
 
+type batchUpdateBlobsRequestPool struct {
+	mu        sync.Mutex
+	pool      sync.Pool // New is protected by mu
+	byteLimit int64
+}
+
+var batchReqPool batchUpdateBlobsRequestPool
+
+// Get gets dummy BachUpdateBlobsRequest to check serialized size.
+// maxSizeBytes is max size needed for data buffer.
+// byteLimit is limit that RBE server sets for batch total size bytes.
+// maxSizeBytes must not exceeds byteLimit.
+func (p *batchUpdateBlobsRequestPool) Get(instance string, maxSizeBytes, byteLimit int64) *rpb.BatchUpdateBlobsRequest {
+	p.mu.Lock()
+	if p.byteLimit < byteLimit {
+		p.byteLimit = byteLimit
+	}
+	if p.pool.New == nil {
+		p.pool.New = func() interface{} {
+			return make([]byte, 0, p.byteLimit)
+		}
+	}
+	buf := p.pool.Get().([]byte)
+	if int64(cap(buf)) < maxSizeBytes {
+		buf = make([]byte, 0, maxSizeBytes)
+	}
+	p.mu.Unlock()
+	return &rpb.BatchUpdateBlobsRequest{
+		InstanceName: instance,
+		Requests:     []*rpb.BatchUpdateBlobsRequest_Request{{Data: buf}},
+	}
+}
+
+func (p *batchUpdateBlobsRequestPool) Put(req *rpb.BatchUpdateBlobsRequest) {
+	p.pool.Put(req.Requests[0].Data)
+}
+
 func separateBlobsByByteLimit(blobs []*rpb.Digest, instance string, byteLimit int64) ([]*rpb.Digest, []*rpb.Digest) {
 	if len(blobs) == 0 {
 		return nil, nil
@@ -113,22 +150,28 @@ func separateBlobsByByteLimit(blobs []*rpb.Digest, instance string, byteLimit in
 	})
 
 	// Create dummy data to check protobuf size. To avoid redundant allocations, find the largest digest size.
+	// string/bytes will be [encoded <wire-type><tag>] [length] [content...]
+	// so no need to allocate more than byteLimit here.
+	// https://developers.google.com/protocol-buffers/docs/encoding#structure
+	// https://developers.google.com/protocol-buffers/docs/encoding#strings
 	maxSizeBytes := blobs[len(blobs)-1].SizeBytes
-	dummyReq := &rpb.BatchUpdateBlobsRequest{
-		InstanceName: instance,
-		Requests:     []*rpb.BatchUpdateBlobsRequest_Request{{Data: make([]byte, 1, maxSizeBytes)}},
+	if maxSizeBytes >= byteLimit {
+		maxSizeBytes = byteLimit
 	}
-
-	for i, blob := range blobs {
-		// Create dummy data to check protobuf size.
-		dummyReq.Requests[0].Digest = blob
-		dummyReq.Requests[0].Data = dummyReq.Requests[0].Data[:blob.SizeBytes]
-		if int64(proto.Size(dummyReq)) >= byteLimit {
-			return blobs[:i], blobs[i:]
+	dummyReq := batchReqPool.Get(instance, maxSizeBytes, byteLimit)
+	defer batchReqPool.Put(dummyReq)
+	i := sort.Search(len(blobs), func(i int) bool {
+		if blobs[i].SizeBytes >= byteLimit {
+			return true
 		}
+		dummyReq.Requests[0].Digest = blobs[i]
+		dummyReq.Requests[0].Data = dummyReq.Requests[0].Data[:blobs[i].SizeBytes]
+		return int64(proto.Size(dummyReq)) >= byteLimit
+	})
+	if i < len(blobs) {
+		return blobs[:i], blobs[i:]
 	}
-	// All blobs have protobuf size below `byteLimit`.
-	return blobs, []*rpb.Digest{}
+	return blobs, nil
 }
 
 func lookupBlobsInStore(ctx context.Context, blobs []*rpb.Digest, store *digest.Store, sema chan struct{}) ([]*rpb.BatchUpdateBlobsRequest_Request, []MissingBlob) {
@@ -245,11 +288,11 @@ func (c CAS) Upload(ctx context.Context, instance string, sema chan struct{}, bl
 
 	// up to max_batch_total_size_bytes, use BatchUpdateBlobs.
 	// more than this, use bytestream.Write.
-	batchLimit := int64(DefaultBatchByteLimit)
+	byteLimit := int64(DefaultBatchByteLimit)
 	if c.CacheCapabilities != nil && c.CacheCapabilities.MaxBatchTotalSizeBytes > 0 {
-		batchLimit = c.CacheCapabilities.MaxBatchTotalSizeBytes
+		byteLimit = c.CacheCapabilities.MaxBatchTotalSizeBytes
 	}
-	smallBlobs, largeBlobs := separateBlobsByByteLimit(blobs, instance, batchLimit)
+	smallBlobs, largeBlobs := separateBlobsByByteLimit(blobs, instance, byteLimit)
 
 	logger.Infof("upload by batch %d out of %d", len(smallBlobs), len(blobs))
 	blobReqs, missingBlobs := lookupBlobsInStore(ctx, smallBlobs, c.Store, sema)
@@ -257,7 +300,7 @@ func (c CAS) Upload(ctx context.Context, instance string, sema chan struct{}, bl
 		Blobs: missingBlobs,
 	}
 
-	batchReqs := createBatchUpdateBlobsRequests(blobReqs, instance, batchLimit)
+	batchReqs := createBatchUpdateBlobsRequests(blobReqs, instance, byteLimit)
 	for _, batchReq := range batchReqs {
 		uploaded := false
 		for !uploaded {

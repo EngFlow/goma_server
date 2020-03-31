@@ -12,7 +12,7 @@ import (
 	"go.chromium.org/goma/server/command/descriptor/posixpath"
 )
 
-func TestGccCwdAgnostic(t *testing.T) {
+func TestGccRelocatableReq(t *testing.T) {
 
 	baseReleaseArgs := []string{
 		"../../third_party/llvm-build/Release+Asserts/bin/clang++",
@@ -78,7 +78,7 @@ func TestGccCwdAgnostic(t *testing.T) {
 		desc        string
 		args        []string
 		envs        []string
-		cwdAgnostic bool
+		relocatable bool
 	}{
 		{
 			desc: "chromium base release",
@@ -86,7 +86,7 @@ func TestGccCwdAgnostic(t *testing.T) {
 			envs: []string{
 				"PWD=/b/c/b/linux/src/out/Release",
 			},
-			cwdAgnostic: true,
+			relocatable: true,
 		},
 		{
 			desc: "chromium base debug",
@@ -136,58 +136,58 @@ func TestGccCwdAgnostic(t *testing.T) {
 			envs: []string{
 				"PWD=/b/c/b/linux/src/out/Debug",
 			},
-			cwdAgnostic: false,
+			relocatable: false,
 		},
 		{
 			desc: "resource-dir relative",
 			args: append(append([]string{}, baseReleaseArgs...),
 				"-resource-dir=../../third_party/llvm-build-release+Asserts/bin/clang/10.0.0"),
-			cwdAgnostic: true,
+			relocatable: true,
 		},
 		{
 			desc: "resource-dir absolute",
 			args: append(append([]string{}, baseReleaseArgs...),
 				"-resource-dir=/b/c/b/linux/src/third_party/llvm-build-release+Asserts/bin/clang/10.0.0"),
-			cwdAgnostic: false,
+			relocatable: false,
 		},
 		{
 			desc: "isystem absolute",
 			args: append(append([]string{}, baseReleaseArgs...),
 				"-isystem/b/c/b/linux/src/build/linux/debian_sid_amd64-sysroot/usr/include/glib-2.0"),
-			cwdAgnostic: false,
+			relocatable: false,
 		},
 		{
 			desc: "include absolute",
-			args: append(append([]string {}, baseReleaseArgs...),
+			args: append(append([]string{}, baseReleaseArgs...),
 				"-include",
 				"/b/c/b/linux/header.h"),
-			cwdAgnostic: false,
+			relocatable: false,
 		},
 		{
 			desc: "include relative",
-			args: append(append([]string {}, baseReleaseArgs...),
+			args: append(append([]string{}, baseReleaseArgs...),
 				"-include",
 				"../b/c/b/linux/header.h"),
-			cwdAgnostic: true,
+			relocatable: true,
 		},
 		{
 			desc: "include= absolute",
-			args: append(append([]string {}, baseReleaseArgs...),
+			args: append(append([]string{}, baseReleaseArgs...),
 				"-include=/b/c/b/linux/header.h"),
-			cwdAgnostic: false,
+			relocatable: false,
 		},
 		{
 			desc: "include= relative",
-			args: append(append([]string {}, baseReleaseArgs...),
+			args: append(append([]string{}, baseReleaseArgs...),
 				"-include=../b/c/b/linux/header.h"),
-			cwdAgnostic: true,
+			relocatable: true,
 		},
 		{
 			desc: "sysroot absolute",
 			args: modifyArgs(baseReleaseArgs,
 				"--sysroot",
 				"--sysroot=/b/c/b/linux/build/linux/debian_sid_amd64-sysroot"),
-			cwdAgnostic: false,
+			relocatable: false,
 		},
 		{
 			desc: "llvm -asan option",
@@ -195,7 +195,7 @@ func TestGccCwdAgnostic(t *testing.T) {
 			args: append(append([]string{}, baseReleaseArgs...),
 				"-mllvm",
 				"-asan-globals=0"),
-			cwdAgnostic: true,
+			relocatable: true,
 		},
 		{
 			desc: "llvm -regalloc option",
@@ -205,27 +205,89 @@ func TestGccCwdAgnostic(t *testing.T) {
 				"-regalloc=pbqp",
 				"-mllvm",
 				"-pbqp-coalescing"),
-			cwdAgnostic: true,
+			relocatable: true,
+		},
+		{
+			desc: "headermap file",
+			// http://b/149448356#comment17
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-Ifoo.hmap"),
+			relocatable: false,
+		},
+		{
+			desc: "headermap file 2",
+			// http://b/149448356#comment17
+			args: append(append([]string{}, baseReleaseArgs...),
+				[]string{"-I", "foo.hmap"}...),
+			relocatable: false,
 		},
 		{
 			desc: "Qunused-arguments",
-			args: append(append([]string {}, baseReleaseArgs...),
+			args: append(append([]string{}, baseReleaseArgs...),
 				"-Qunused-arguments"),
-			cwdAgnostic: true,
+			relocatable: true,
+		},
+		{
+			desc: "fprofile-instr-use relative",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-fprofile-instr-use=../../out/data/default.profdata"),
+			relocatable: true,
+		},
+		{
+			desc: "fprofile-instr-use absolute",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-fprofile-instr-use=/b/c/b/linux/src/out/data/default.profdataa"),
+			relocatable: false,
+		},
+		{
+			desc: "fprofile-sample-use relative",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-fprofile-sample-use=../../chrome/android/profiles/afdo.prof"),
+			relocatable: true,
+		},
+		{
+			desc: "fprofile-sample-use absolute",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-fprofile-sample-use=/b/c/b/linux/src/android/profiles/afdo.prof"),
+			relocatable: false,
+		},
+		{
+			desc: "fsatinitize-blacklist relative",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-fsanitize-blacklist=../../tools/cfi/blacklist.txt"),
+			relocatable: true,
+		},
+		{
+			desc: "fsanitize-blacklist absolute",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-fsanitize-blacklist=/b/c/b/linux/src/tools/cfi/blacklist.txt"),
+			relocatable: false,
+		},
+		{
+			desc: "fcrash-diagnostics-dir absolute",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-fcrash-diagnostics-dir=../../tools/clang/crashreports"),
+			relocatable: true,
+		},
+		{
+			desc: "fcrash-diagnostics-dir absolute",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-fcrash-diagnostics-dir=/b/c/b/linux/src/tools/clang/crashreports"),
+			relocatable: false,
 		},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
-			err := gccCwdAgnostic(posixpath.FilePath{}, tc.args, tc.envs)
-			if (err == nil) != tc.cwdAgnostic {
-				t.Errorf("gccCwdAgnostic(posixpath.FilePath, args, envs)=%v; cwdAgnostic=%t", err, tc.cwdAgnostic)
+			err := gccRelocatableReq(posixpath.FilePath{}, tc.args, tc.envs)
+			if (err == nil) != tc.relocatable {
+				t.Errorf("gccRelocatableReq(posixpath.FilePath, args, envs)=%v; relocatable=%t", err, tc.relocatable)
 			}
 		})
 	}
 }
 
-func TestGccCwdAgnosticForDebugCompilationDir(t *testing.T) {
+func TestGccRelocatableReqForDebugCompilationDir(t *testing.T) {
 	// Tests for supporting "-fdebug-compilation-dir", see b/135719929.
-	// We could have merged the cases here into TestGccCwdAgnostic, but decided
+	// We could have merged the cases here into TestGccRelocatableReq, but decided
 	// to separate them for clarity.
 
 	// Do not set "-g*" options in baseReleaseArgs!
@@ -240,14 +302,14 @@ func TestGccCwdAgnosticForDebugCompilationDir(t *testing.T) {
 		desc        string
 		args        []string
 		envs        []string
-		cwdAgnostic bool
+		relocatable bool
 	}{
 		{
 			desc: "basic",
 			args: append(append([]string{}, baseReleaseArgs...),
 				"-fdebug-compilation-dir",
 				"."),
-			cwdAgnostic: true,
+			relocatable: true,
 		},
 		{
 			desc: "-Xclang",
@@ -256,7 +318,7 @@ func TestGccCwdAgnosticForDebugCompilationDir(t *testing.T) {
 				"-fdebug-compilation-dir",
 				"-Xclang",
 				"."),
-			cwdAgnostic: true,
+			relocatable: true,
 		},
 		{
 			desc: "With -g* DBG options",
@@ -265,7 +327,7 @@ func TestGccCwdAgnosticForDebugCompilationDir(t *testing.T) {
 				"-gsplit-dwarf",
 				"-fdebug-compilation-dir",
 				"."),
-			cwdAgnostic: true,
+			relocatable: true,
 		},
 		{
 			desc: "-Xclang with -g* DBG option",
@@ -276,7 +338,7 @@ func TestGccCwdAgnosticForDebugCompilationDir(t *testing.T) {
 				"-fdebug-compilation-dir",
 				"-Xclang",
 				"."),
-			cwdAgnostic: true,
+			relocatable: true,
 		},
 		{
 			// Make sure the CWD agnostic still returns false if
@@ -285,7 +347,7 @@ func TestGccCwdAgnosticForDebugCompilationDir(t *testing.T) {
 			args: append(append([]string{}, baseReleaseArgs...),
 				"-g2",
 				"-gsplit-dwarf"),
-			cwdAgnostic: false,
+			relocatable: false,
 		},
 		{
 			// "-fdebug-compilation-dir" is not supported as LLVM flags.
@@ -295,13 +357,21 @@ func TestGccCwdAgnosticForDebugCompilationDir(t *testing.T) {
 				"-fdebug-compilation-dir",
 				"-mllvm",
 				"."),
-			cwdAgnostic: false,
+			relocatable: false,
+		},
+		{
+			desc: "input abs path",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-fdebug-compilation-dir",
+				".",
+				"-isystem/b/c/b/linux/src/build/linux/debian_sid_amd64-sysroot/usr/include/glib-2.0"),
+			relocatable: false,
 		},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
-			err := gccCwdAgnostic(posixpath.FilePath{}, tc.args, tc.envs)
-			if (err == nil) != tc.cwdAgnostic {
-				t.Errorf("gccCwdAgnostic(posixpath.FilePath, args, envs)=%v; cwdAgnostic=%t", err, tc.cwdAgnostic)
+			err := gccRelocatableReq(posixpath.FilePath{}, tc.args, tc.envs)
+			if (err == nil) != tc.relocatable {
+				t.Errorf("gccRelocatableReq(posixpath.FilePath, args, envs)=%v; relocatable=%t", err, tc.relocatable)
 			}
 		})
 	}

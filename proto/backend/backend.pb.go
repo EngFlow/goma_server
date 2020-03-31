@@ -503,7 +503,9 @@ func init() {
 	proto.RegisterType((*BackendConfig)(nil), "backend.BackendConfig")
 }
 
-func init() { proto.RegisterFile("backend/backend.proto", fileDescriptor_b81549028379a959) }
+func init() {
+	proto.RegisterFile("backend/backend.proto", fileDescriptor_b81549028379a959)
+}
 
 var fileDescriptor_b81549028379a959 = []byte{
 	// 466 bytes of a gzipped FileDescriptorProto

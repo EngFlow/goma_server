@@ -25,7 +25,9 @@ var _ = math.Inf
 // proto package needs to be updated.
 const _ = proto.ProtoPackageIsVersion3 // please upgrade the proto package
 
-func init() { proto.RegisterFile("execlog/log_service.proto", fileDescriptor_a47cf8dc6db25b78) }
+func init() {
+	proto.RegisterFile("execlog/log_service.proto", fileDescriptor_a47cf8dc6db25b78)
+}
 
 var fileDescriptor_a47cf8dc6db25b78 = []byte{
 	// 131 bytes of a gzipped FileDescriptorProto

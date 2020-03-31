@@ -164,7 +164,9 @@ func init() {
 	proto.RegisterType((*ACL)(nil), "auth.ACL")
 }
 
-func init() { proto.RegisterFile("auth/acl.proto", fileDescriptor_91b80568fa5a4647) }
+func init() {
+	proto.RegisterFile("auth/acl.proto", fileDescriptor_91b80568fa5a4647)
+}
 
 var fileDescriptor_91b80568fa5a4647 = []byte{
 	// 220 bytes of a gzipped FileDescriptorProto

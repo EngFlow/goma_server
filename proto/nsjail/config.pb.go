@@ -1270,7 +1270,9 @@ func init() {
 	proto.RegisterType((*NsJailConfig)(nil), "nsjail.NsJailConfig")
 }
 
-func init() { proto.RegisterFile("nsjail/config.proto", fileDescriptor_82b7e3129c410694) }
+func init() {
+	proto.RegisterFile("nsjail/config.proto", fileDescriptor_82b7e3129c410694)
+}
 
 var fileDescriptor_82b7e3129c410694 = []byte{
 	// 2041 bytes of a gzipped FileDescriptorProto

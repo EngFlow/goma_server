@@ -12,6 +12,7 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"path"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"github.com/googleapis/google-cloud-go-testing/storage/stiface"
 	"go.opencensus.io/stats"
 	"go.opencensus.io/stats/view"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/api/iterator"
 
 	"go.chromium.org/goma/server/log"
@@ -383,7 +385,8 @@ func (c ConfigMapBucket) RuntimeConfigs(ctx context.Context) (map[string]*cmdpb.
 
 // ConfigLoader loads toolchain_config from cloud storage.
 type ConfigLoader struct {
-	StorageClient stiface.Client
+	StorageClient  stiface.Client
+	EnableParallel bool
 
 	// for test
 	versionID func() string
@@ -492,6 +495,7 @@ func mergePlatformProperties(rbePlatform *cmdpb.RemoteexecPlatform, platform *cm
 // It sets rc.ServiceAddr  as target addr.
 func (c *ConfigLoader) Load(ctx context.Context, uri string, rc *cmdpb.RuntimeConfig) ([]*cmdpb.Config, error) {
 	platform := &cmdpb.RemoteexecPlatform{}
+	parallel := c.EnableParallel
 	for _, p := range rc.Platform.GetProperties() {
 		platform.Properties = append(platform.Properties, &cmdpb.RemoteexecPlatform_Property{
 			Name:  p.Name,
@@ -500,7 +504,7 @@ func (c *ConfigLoader) Load(ctx context.Context, uri string, rc *cmdpb.RuntimeCo
 	}
 	platform.HasNsjail = rc.GetPlatformRuntimeConfig().GetHasNsjail()
 
-	confs, err := loadConfigs(ctx, c.StorageClient, uri, rc, platform)
+	confs, err := loadConfigs(ctx, c.StorageClient, uri, rc, platform, parallel)
 	if err != nil {
 		return nil, err
 	}
@@ -671,7 +675,7 @@ func checkSelector(rc *cmdpb.RuntimeConfig, sel *cmdpb.Selector) error {
 	return nil
 }
 
-func loadConfigs(ctx context.Context, client stiface.Client, uri string, rc *cmdpb.RuntimeConfig, platform *cmdpb.RemoteexecPlatform) ([]*cmdpb.Config, error) {
+func loadConfigs(ctx context.Context, client stiface.Client, uri string, rc *cmdpb.RuntimeConfig, platform *cmdpb.RemoteexecPlatform, parallel bool) ([]*cmdpb.Config, error) {
 	logger := log.FromContext(ctx)
 	bucket, obj, err := splitGCSPath(uri)
 	if err != nil {
@@ -689,7 +693,10 @@ func loadConfigs(ctx context.Context, client stiface.Client, uri string, rc *cmd
 	// pagination?
 	var confs []*cmdpb.Config
 	logger.Infof("load from %s", bucket)
+	start := time.Now()
+	var attrsList []*storage.ObjectAttrs
 	for {
+		// iter does not have an API to read all, so just iterate everything.
 		attrs, err := iter.Next()
 		if err == iterator.Done {
 			break
@@ -697,8 +704,8 @@ func loadConfigs(ctx context.Context, client stiface.Client, uri string, rc *cmd
 		if err != nil {
 			return nil, err
 		}
-		err = checkPrebuilt(rc, attrs.Name)
-		if err != nil {
+		// Some string ops, no need to be paralleled.
+		if err := checkPrebuilt(rc, attrs.Name); err != nil {
 			logger.Infof("prebuilt %s: %v", attrs.Name, err)
 			continue
 		}
@@ -707,46 +714,76 @@ func loadConfigs(ctx context.Context, client stiface.Client, uri string, rc *cmd
 			logger.Infof("ignore %s", attrs.Name)
 			continue
 		}
-		d, err := loadDescriptor(ctx, client, bucket, attrs.Name)
-		if err != nil {
-			return nil, err
-		}
-		ts, err := ptypes.TimestampProto(attrs.Updated)
-		if err != nil {
-			return nil, err
-		}
-
-		// check descriptor.
-		err = checkSelector(rc, d.Selector)
-		if err != nil {
-			logger.Errorf("selector in %s/%s: %v", bucket, attrs.Name, err)
+		attrsList = append(attrsList, attrs)
+	}
+	logger.Infof("iterate over %s took %v", bucket, time.Since(start))
+	start = time.Now()
+	concurrent := 1
+	if parallel {
+		// Limit concurrent requests to NumCPU * 4.
+		concurrent = runtime.NumCPU() * 4
+	}
+	// The ordering of the output should be guaranteed
+	// as unit tests using proto.Equal.
+	var eg errgroup.Group
+	confList := make([]*cmdpb.Config, len(attrsList))
+	sema := make(chan struct{}, concurrent)
+	for i := range attrsList {
+		i := i
+		sema <- struct{}{}
+		eg.Go(func() error {
+			// Limit number of goroutines.
+			defer func() { <-sema }()
+			attrs := attrsList[i]
+			d, err := loadDescriptor(ctx, client, bucket, attrs.Name)
+			if err != nil {
+				return err
+			}
+			ts, err := ptypes.TimestampProto(attrs.Updated)
+			if err != nil {
+				return err
+			}
+			if err = checkSelector(rc, d.Selector); err != nil {
+				logger.Errorf("selector in %s/%s: %v", bucket, attrs.Name, err)
+				return nil
+			}
+			if d.Setup == nil {
+				logger.Errorf("no setup in %s/%s", bucket, attrs.Name)
+				return nil
+			}
+			if d.Setup.PathType == cmdpb.CmdDescriptor_UNKNOWN_PATH_TYPE {
+				logger.Errorf("unknown path type in %s/%s", bucket, attrs.Name)
+				return nil
+			}
+			// TODO: fix config definition.
+			// BuildInfo is used for key for cache key.
+			//  include cmd_server hash etc?
+			// BuildInfo.Timestamp is used for dedup in exec_server.
+			confList[i] = &cmdpb.Config{
+				Target: &cmdpb.Target{
+					Addr: rc.ServiceAddr,
+				},
+				BuildInfo: &cmdpb.BuildInfo{
+					Timestamp: ts,
+				},
+				CmdDescriptor:      d,
+				RemoteexecPlatform: platform,
+			}
+			return nil
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return nil, err
+	}
+	for i := range attrsList {
+		attrs := attrsList[i]
+		conf := confList[i]
+		if conf == nil {
 			continue
-		}
-		if d.Setup == nil {
-			logger.Errorf("no setup in %s/%s", bucket, attrs.Name)
-			continue
-		}
-		if d.Setup.PathType == cmdpb.CmdDescriptor_UNKNOWN_PATH_TYPE {
-			logger.Errorf("unknown path type in %s/%s", bucket, attrs.Name)
-			continue
-		}
-		// TODO: fix config definition.
-		// BuildInfo is used for key for cache key.
-		//  include cmd_server hash etc?
-		// BuildInfo.Timestamp is used for dedup in exec_server.
-		conf := &cmdpb.Config{
-			Target: &cmdpb.Target{
-				Addr: rc.ServiceAddr,
-			},
-			BuildInfo: &cmdpb.BuildInfo{
-				Timestamp: ts,
-			},
-			CmdDescriptor:      d,
-			RemoteexecPlatform: platform,
 		}
 		confs = append(confs, conf)
-		logger.Infof("%s/%s: %s", bucket, attrs.Name, d.GetSelector())
+		logger.Infof("%s/%s: %s", bucket, attrs.Name, conf.CmdDescriptor.GetSelector())
 	}
-	logger.Infof("loaded from %s: %d configs", bucket, len(confs))
+	logger.Infof("loaded from %s: %d configs using %v", bucket, len(confs), time.Since(start))
 	return confs, nil
 }

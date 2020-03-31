@@ -74,6 +74,10 @@ type Adapter struct {
 	// which calls Store.Get().
 	CASBlobLookupSema chan struct{}
 
+	// OutputFileSema specifies concurrency to download files from CAS and store in
+	// file server in gomaOutput.toFileBlob().
+	OutputFileSema chan struct{}
+
 	capMu        sync.Mutex
 	capabilities *rpb.ServerCapabilities
 }

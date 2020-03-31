@@ -85,7 +85,9 @@ func init() {
 	proto.RegisterEnum("devtools_goma.ExecServiceApplicationError", ExecServiceApplicationError_name, ExecServiceApplicationError_value)
 }
 
-func init() { proto.RegisterFile("exec/exec_service.proto", fileDescriptor_86aa5ae33157a9d0) }
+func init() {
+	proto.RegisterFile("exec/exec_service.proto", fileDescriptor_86aa5ae33157a9d0)
+}
 
 var fileDescriptor_86aa5ae33157a9d0 = []byte{
 	// 281 bytes of a gzipped FileDescriptorProto

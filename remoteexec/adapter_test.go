@@ -949,12 +949,12 @@ func TestAdaptorHandleArbitraryToolchainSupport(t *testing.T) {
 		}
 	}
 
-	if got, want := files["out/Release/run.sh"].digest, digest.Bytes("cwd-agnostic-wrapper-script", []byte(cwdAgnosticWrapperScript)).Digest(); !proto.Equal(got, want) {
+	if got, want := files["out/Release/run.sh"].digest, digest.Bytes("relocatable-wrapper-script", []byte(relocatableWrapperScript)).Digest(); !proto.Equal(got, want) {
 		t.Errorf("digest of out/Release/run.sh: %s != %s", got, want)
 	}
 }
 
-func TestAdaptorHandleArbitraryToolchainSupportNonCwdAgnostic(t *testing.T) {
+func TestAdaptorHandleArbitraryToolchainSupportNonRelocatable(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -1099,12 +1099,12 @@ func TestAdapterDockerProperties(t *testing.T) {
 		want []*rpb.Platform_Property
 	}{
 		{
-			desc: "cwd agnostic",
+			desc: "relocatable",
 			args: nil,
 			want: nil,
 		},
 		{
-			desc: "non cwd agnostic",
+			desc: "non relocatable",
 			args: []string{"-g"},
 			want: []*rpb.Platform_Property{
 				{

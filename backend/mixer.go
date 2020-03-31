@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 
+	"go.chromium.org/goma/server/auth"
 	"go.chromium.org/goma/server/auth/enduser"
 	"go.chromium.org/goma/server/log"
 	pb "go.chromium.org/goma/server/proto/backend"
@@ -148,6 +149,11 @@ func (m Mixer) dispatcher(handler func(Backend) http.Handler) http.Handler {
 			ctx, err = m.Auth.Auth(ctx, req)
 			if err != nil {
 				code := http.StatusUnauthorized
+				// Making the client to retry with the refreshed token instead of throttling.
+				// Please see (b/150189886) for details.
+				if err == auth.ErrExpired {
+					code = http.StatusServiceUnavailable
+				}
 				http.Error(w, "The request requires user authentication", code)
 				logger.Errorf("auth error %s: %d %s: %v", req.URL.Path, code, http.StatusText(code), err)
 				return

@@ -111,7 +111,9 @@ func init() {
 	proto.RegisterType((*CheckMembershipResp)(nil), "auth.CheckMembershipResp")
 }
 
-func init() { proto.RegisterFile("auth/authdb.proto", fileDescriptor_555942e2cbf784d7) }
+func init() {
+	proto.RegisterFile("auth/authdb.proto", fileDescriptor_555942e2cbf784d7)
+}
 
 var fileDescriptor_555942e2cbf784d7 = []byte{
 	// 129 bytes of a gzipped FileDescriptorProto

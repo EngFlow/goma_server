@@ -247,7 +247,9 @@ func init() {
 	proto.RegisterType((*PutResp)(nil), "cache.PutResp")
 }
 
-func init() { proto.RegisterFile("cache/cache.proto", fileDescriptor_dd209d76f5b70ea3) }
+func init() {
+	proto.RegisterFile("cache/cache.proto", fileDescriptor_dd209d76f5b70ea3)
+}
 
 var fileDescriptor_dd209d76f5b70ea3 = []byte{
 	// 203 bytes of a gzipped FileDescriptorProto

@@ -67,6 +67,7 @@ var (
 	remoteexecAddr       = flag.String("remoteexec-addr", "", "use remoteexec API endpoint")
 	remoteInstancePrefix = flag.String("remote-instance-prefix", "", "remote instance name path prefix.")
 	cmdFilesBucket       = flag.String("cmd-files-bucket", "", "cloud storage bucket for command binary files")
+	fetchConfigParallel  = flag.Bool("fetch-config-parallel", false, "fetch toolchain configs in parallel")
 
 	// Needed for b/120582303, but will be deprecated by b/80508682.
 	fileLookupConcurrency = flag.Int("file-lookup-concurrency", 20, "concurrency to look up files from file-server")
@@ -130,11 +131,16 @@ func configMapToConfigResp(ctx context.Context, cm *cmdpb.ConfigMap) *cmdpb.Conf
 }
 
 func configureByLoader(ctx context.Context, loader *command.ConfigMapLoader, inventory *exec.Inventory) (string, error) {
+	logger := log.FromContext(ctx)
+	start := time.Now()
 	resp, err := loader.Load(ctx)
+	logger.Infof("loader.Load finished in %s", time.Since(start))
 	if err != nil {
 		return "", err
 	}
+	start = time.Now()
 	err = inventory.Configure(ctx, resp)
+	logger.Infof("inventory.Configure finished in %s", time.Since(start))
 	if err != nil {
 		return "", err
 	}
@@ -196,7 +202,8 @@ func newConfigServer(ctx context.Context, inventory *exec.Inventory, bucket, con
 	cs.loader = &command.ConfigMapLoader{
 		ConfigMap: cs.configmap,
 		ConfigLoader: command.ConfigLoader{
-			StorageClient: stiface.AdaptClient(gsclient),
+			StorageClient:  stiface.AdaptClient(gsclient),
+			EnableParallel: *fetchConfigParallel,
 		},
 	}
 	return cs, nil
@@ -352,6 +359,7 @@ func main() {
 		*fileLookupConcurrency = 1
 	}
 	casBlobLookupConcurrency := 20
+	outputFileConcurrency := 20
 	re := &remoteexec.Adapter{
 		InstancePrefix: *remoteInstancePrefix,
 		ExecTimeout:    15 * time.Minute,
@@ -366,6 +374,7 @@ func main() {
 		},
 		FileLookupSema:    make(chan struct{}, *fileLookupConcurrency),
 		CASBlobLookupSema: make(chan struct{}, casBlobLookupConcurrency),
+		OutputFileSema:    make(chan struct{}, outputFileConcurrency),
 	}
 
 	if *cmdFilesBucket == "" {

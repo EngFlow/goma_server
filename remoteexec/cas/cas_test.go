@@ -15,6 +15,7 @@ import (
 	rpb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 	"github.com/golang/protobuf/proto"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"go.chromium.org/goma/server/remoteexec/digest"
 )
@@ -59,7 +60,7 @@ func blobDataToBatchUpdateReq(b *blobData) *rpb.BatchUpdateBlobsRequest_Request 
 }
 
 func protoEqual(x, y interface{}) bool {
-	return cmp.Equal(x, y, cmp.Comparer(proto.Equal))
+	return cmp.Equal(x, y, cmp.Comparer(proto.Equal), cmpopts.EquateEmpty())
 }
 
 func TestMissing(t *testing.T) {

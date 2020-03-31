@@ -10,20 +10,37 @@ import (
 	"strings"
 )
 
+var pathFlags = []string{
+	"--sysroot=",
+	"-B",
+	"-I",
+	"-fcrash-diagnostics-dir=",
+	"-fprofile-instr-use=",
+	"-fprofile-sample-use=",
+	"-fsanitize-blacklist=",
+	"-include=",
+	"-isystem",
+	"-o",
+	"-resource-dir=",
+}
+
 // TODO: share exec/gcc.go ?
 
-// gccCwdAgnostic checks if args will generate cwd-agnostic outputs
-// (files/stdout/stderr).
+// gccRelocatableReq checks if the request (args, envs) uses relative
+// paths only and doesn't use flags that generates output including cwd,
+// so will generate cwd-agnostic outputs
+// (files/stdout/stderr will not include cwd dependent paths).
 //
-// args will be cwd-agnostic if path used in arg is cwd relative.
+// The request will be relocatable if path used in arg is cwd relative.
 //
-// args will NOT generate cwd-agnostic output (.o), that is, generate
+// The request will NOT be relocatable, that is, generate
 // outputs that would contain absolute path names (DW_AT_comp_dir etc),
 // if
 //  debug build (-g* except -g0) -> DW_AT_comp_dir or other filepaths.
+//    this will be canceled by -fdebug-compilation-dir
 //  --pnacl-allow-translate  crbug.com/685461
 //
-// these flags would emit non cwd-agnostic output.
+// The following flags would NOT be relocatable
 //  absolute input filename (debug build)
 //      *.d file output will not be cwd-agnostic.
 //      DW_AT_name (debug build)
@@ -37,32 +54,66 @@ import (
 //
 // ref:
 // https://docs.google.com/spreadsheets/d/1_-ZJhqy7WhSFYuZU2QkmQ4Ed9182bWfKg09EfBAkVf8/edit#gid=759603323
-func gccCwdAgnostic(filepath clientFilePath, args, envs []string) error {
+//
+// TODO: http://b/150662978 relocatableReq should check input and output file path too.
+func gccRelocatableReq(filepath clientFilePath, args, envs []string) error {
 	var debugFlags []string
+	debugCompilationDir := false
 	subArgs := map[string][]string{}
 	pathFlag := false
 	var subCmd string
+Loop:
 	for _, arg := range args {
-		switch {
-		case arg == "-fdebug-compilation-dir":
-			// We can stop checking the rest of the flags. When seeing
-			// "-fdebug-compilation-dir", we expect the result to be CWD agnostic.
-			//
-			// Note that this check applies to both GCC and Clang and returns nil
-			// immediately for the following cases:
-			// -xx -fdebug-compilation-dir . -yy ...                 <- GCC flag
-			// -xx -XClang -fdebug-compilation-dir -XClang . -yy ... <- Clang flag
-			//
-			// As a result, clangArgCwdAgnostic() doesn't need to check this again.
-			if subCmd == "" || subCmd == "clang" {
-				return nil
-			}
-			return errors.New("fdebug-compilation-dir not supported for " + subCmd)
-		case pathFlag:
+		if pathFlag {
 			if filepath.IsAbs(arg) {
 				return fmt.Errorf("abs path: %s", arg)
 			}
+			// TODO: When clang supports relative paths in hmap,
+			// instead check that hmap does not have abs paths.
+			if strings.HasSuffix(arg, ".hmap") {
+				return fmt.Errorf("hmap file: %s", arg)
+			}
 			pathFlag = false
+			continue
+		}
+		// TODO: When clang supports relative paths in hmap,
+		// instead check that hmap does not have abs paths.
+		if strings.HasPrefix(arg, "-I") && strings.HasSuffix(arg, ".hmap") {
+			return fmt.Errorf("hmap file: %s", arg)
+		}
+		for _, fp := range pathFlags {
+			if arg != fp && strings.HasPrefix(arg, fp) {
+
+				if filepath.IsAbs(arg[len(fp):]) {
+					return fmt.Errorf("abs path: %s", arg)
+				}
+				continue Loop
+			}
+		}
+		switch {
+		case arg == "-fdebug-compilation-dir":
+			// We can stop checking the rest of the flags.
+			// When seeing "-fdebug-compilation-dir",
+			// we could cancel non-cwd agnosticsness due to
+			// debug flags.
+			//
+			// Note that this check applies to both GCC and Clang
+			// -xx -fdebug-compilation-dir . -yy ...                 <- GCC flag
+			// -xx -Xclang -fdebug-compilation-dir -Xclang . -yy ... <- Clang flag
+			//
+			// As a result, clangArgRelocatableReq() doesn't need to check this again.
+			// The value of -fdebug-compilation-dir is used
+			// just for DW_AT_comp_dir, so no need to check it.
+			switch subCmd {
+			case "clang":
+				subArgs[subCmd] = append(subArgs[subCmd], arg)
+				fallthrough
+			case "":
+				debugCompilationDir = true
+
+				continue Loop
+			}
+			return errors.New("fdebug-compilation-dir not supported for " + subCmd)
 
 		case subCmd != "":
 			subArgs[subCmd] = append(subArgs[subCmd], arg)
@@ -120,33 +171,8 @@ func gccCwdAgnostic(filepath clientFilePath, args, envs []string) error {
 			pathFlag = true
 		case arg == "-MF":
 			pathFlag = true
-		case strings.HasPrefix(arg, "-o"):
-			if filepath.IsAbs(arg[len("-o"):]) {
-				return fmt.Errorf("abs path: %s", arg)
-			}
-		case strings.HasPrefix(arg, "-I") || strings.HasPrefix(arg, "-B"):
-			if filepath.IsAbs(arg[len("-I"):]) {
-				return fmt.Errorf("abs path: %s", arg)
-			}
-		case strings.HasPrefix(arg, "-isystem"):
-			if filepath.IsAbs(arg[len("-isystem"):]) {
-				return fmt.Errorf("abs path: %s", arg)
-			}
-		case strings.HasPrefix(arg, "-include="):
-			if filepath.IsAbs(arg[len("-include="):]) {
-				return fmt.Errorf("abs path: %s", arg)
-			}
-		case strings.HasPrefix(arg, "--sysroot="):
-			if filepath.IsAbs(arg[len("--sysroot="):]) {
-				return fmt.Errorf("abs path: %s", arg)
-			}
 		case arg == "-isysroot":
 			pathFlag = true
-
-		case strings.HasPrefix(arg, "-resource-dir="):
-			if filepath.IsAbs(arg[len("-resource-dir="):]) {
-				return fmt.Errorf("abs path: %s", arg)
-			}
 
 		case strings.HasPrefix(arg, "-"): // unknown flag?
 			return fmt.Errorf("unknown flag: %s", arg)
@@ -158,19 +184,19 @@ func gccCwdAgnostic(filepath clientFilePath, args, envs []string) error {
 		}
 	}
 
-	if len(debugFlags) > 0 {
+	if len(debugFlags) > 0 && !debugCompilationDir {
 		return fmt.Errorf("debug build: %q", debugFlags)
 	}
 	if len(subArgs) > 0 {
 		for cmd, args := range subArgs {
 			switch cmd {
 			case "clang":
-				err := clangArgCwdAgnostic(filepath, args)
+				err := clangArgRelocatable(filepath, args)
 				if err != nil {
 					return err
 				}
 			case "llvm":
-				err := llvmArgCwdAgnostic(filepath, args)
+				err := llvmArgRelocatable(filepath, args)
 				if err != nil {
 					return err
 				}
@@ -195,7 +221,7 @@ func gccCwdAgnostic(filepath clientFilePath, args, envs []string) error {
 	return nil
 }
 
-func clangArgCwdAgnostic(filepath clientFilePath, args []string) error {
+func clangArgRelocatable(filepath clientFilePath, args []string) error {
 	pathFlag := false
 	skipFlag := false
 	for _, arg := range args {
@@ -208,8 +234,8 @@ func clangArgCwdAgnostic(filepath clientFilePath, args []string) error {
 		case skipFlag:
 			skipFlag = false
 
-		case arg == "-mllvm" || arg == "-add-plugin":
-			// TODO: pass llvmArgCwdAgnostic for -mllvm?
+		case arg == "-mllvm", arg == "-add-plugin", arg == "-fdebug-compilation-dir":
+			// TODO: pass llvmArgRelocatable for -mllvm?
 			skipFlag = true
 		case strings.HasPrefix(arg, "-plugin-arg-"):
 			skipFlag = true
@@ -222,7 +248,7 @@ func clangArgCwdAgnostic(filepath clientFilePath, args []string) error {
 	return nil
 }
 
-func llvmArgCwdAgnostic(filepath clientFilePath, args []string) error {
+func llvmArgRelocatable(filepath clientFilePath, args []string) error {
 	for _, arg := range args {
 		switch {
 		case strings.HasPrefix(arg, "-asan-"):

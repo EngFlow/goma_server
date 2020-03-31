@@ -370,13 +370,16 @@ func Handler(name string, req, resp proto.Message, h func(context.Context, proto
 				authOK = true
 			}
 			resp, err = h(ctx, req)
+			if err != nil {
+				logger.Warnf("handler error %v; ctx.Err()=%v", err, ctx.Err())
+			}
 			if opt.Auth != nil && status.Code(err) == codes.Unauthenticated {
 				logger.Warnf("retry for unauthenticated %v", err)
 				return rpc.RetriableError{
 					Err: err,
 				}
 			}
-			if status.Code(err) == codes.DeadlineExceeded && pctx.Err() == nil {
+			if ((err != nil && ctx.Err() == context.DeadlineExceeded) || status.Code(err) == codes.DeadlineExceeded) && pctx.Err() == nil {
 				// api call is timed out, but caller's context is not.
 				// it would happen
 				// a) timeout was short; api call actually needs more time.

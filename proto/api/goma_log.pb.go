@@ -1597,7 +1597,9 @@ func init() {
 	proto.RegisterType((*OSInfo_MacInfo)(nil), "devtools_goma.OSInfo.MacInfo")
 }
 
-func init() { proto.RegisterFile("api/goma_log.proto", fileDescriptor_663523c6ed595628) }
+func init() {
+	proto.RegisterFile("api/goma_log.proto", fileDescriptor_663523c6ed595628)
+}
 
 var fileDescriptor_663523c6ed595628 = []byte{
 	// 2573 bytes of a gzipped FileDescriptorProto

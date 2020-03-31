@@ -10,12 +10,14 @@ import (
 
 // TODO: share exec/clangcl.go ?
 
-// clangclCwdAgnostic checks if args will generate cwd-agnostic outputs
-// (files/stdout/stderr).
+// clangclRelocatableReq checks if the request (args, envs) uses relative
+// paths only and doesn't use flags that generates output including cwd,
+// so will generate cwd-agnostic outputs
+// (files/stdout/stderr will not include cwd dependent paths).
 //
 // TODO: implement it.
-func clangclCwdAgnostic(args, envs []string) error {
-	return errors.New("no cwd agnostic check for clang-cl")
+func clangclRelocatableReq(args, envs []string) error {
+	return errors.New("no relocatable check for clang-cl")
 }
 
 // clangclOutputs returns output files from clang-cl command line.
