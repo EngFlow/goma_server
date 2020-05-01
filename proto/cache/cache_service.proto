@@ -4,9 +4,11 @@
 
 syntax = "proto3";
 
-import "cache/cache.proto";
-
 package cache;
+
+option go_package = "go.chromium.org/goma/server/proto/cache";
+
+import "cache/cache.proto";
 
 service CacheService {
   rpc Get(GetReq) returns (GetResp) {}

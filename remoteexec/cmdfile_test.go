@@ -1,6 +1,4 @@
-// Copyright 2018 The Goma Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+// Copyright 2018 Google LLC. All Rights Reserved.
 
 package remoteexec
 
@@ -26,13 +24,13 @@ func (dcs dummyCmdStorage) Open(ctx context.Context, hash string) (io.ReadCloser
 
 func TestFileSpecToEntry(t *testing.T) {
 	tests := []struct {
-		input     pb.FileSpec
+		input     *pb.FileSpec
 		wantEntry merkletree.Entry
 		wantErr   bool
 	}{
 		// Executable files.
 		{
-			pb.FileSpec{
+			&pb.FileSpec{
 				Path:         "../../native_client/toolchain/linux_x86/pnacl_newlib/bin/pnacl-clang++",
 				Hash:         "7bf4c008d0321a9956279edd58fd2078569e9595fbfe5775c228836b36d71796",
 				Size:         1234,
@@ -52,7 +50,7 @@ func TestFileSpecToEntry(t *testing.T) {
 					}),
 			}, false,
 		}, {
-			pb.FileSpec{
+			&pb.FileSpec{
 				Path:         "../../native_client/toolchain/linux_x86/pnacl_newlib/bin/clang",
 				Hash:         "42151bf3845e7b44d0339964cdc19ce55427e7eee9e4bf0d306fe313ed8b5db8",
 				Size:         4567,
@@ -73,7 +71,7 @@ func TestFileSpecToEntry(t *testing.T) {
 			}, false,
 		}, {
 			// Test IsExecutable=false.
-			pb.FileSpec{
+			&pb.FileSpec{
 				Path:         "../../native_client/toolchain/linux_x86/pnacl_newlib/bin/../lib/libc++.so.1.0",
 				Hash:         "7fc88a31bbededbe1f276c23a66797b21cf8d7f837e6580e70b2755a817a08c7",
 				Size:         1111,
@@ -94,7 +92,7 @@ func TestFileSpecToEntry(t *testing.T) {
 			}, false,
 		}, {
 			// Invalid entry.
-			pb.FileSpec{
+			&pb.FileSpec{
 				Path:    "../../native_client/toolchain/linux_x86/pnacl_newlib/bin/../lib/libc++.so.1.0",
 				Hash:    "7fc88a31bbededbe1f276c23a66797b21cf8d7f837e6580e70b2755a817a08c7",
 				Symlink: "libc++.so.1.0",
@@ -102,7 +100,7 @@ func TestFileSpecToEntry(t *testing.T) {
 			merkletree.Entry{}, true,
 		}, {
 			// Dir.
-			pb.FileSpec{
+			&pb.FileSpec{
 				Path: "../../native_client/toolchain/linux_x86/pnacl_newlib/bin",
 			},
 			merkletree.Entry{
@@ -110,7 +108,7 @@ func TestFileSpecToEntry(t *testing.T) {
 			}, false,
 		}, {
 			// Symlinks.
-			pb.FileSpec{
+			&pb.FileSpec{
 				Path:    "../../native_client/toolchain/linux_x86/pnacl_newlib/bin/clang++",
 				Symlink: "clang",
 			},
@@ -119,7 +117,7 @@ func TestFileSpecToEntry(t *testing.T) {
 				Target: "clang",
 			}, false,
 		}, {
-			pb.FileSpec{
+			&pb.FileSpec{
 				Path:    "../../native_client/toolchain/linux_x86/pnacl_newlib/bin/../lib/libc++.so",
 				Symlink: "libc++.so.1",
 			},
@@ -128,7 +126,7 @@ func TestFileSpecToEntry(t *testing.T) {
 				Target: "libc++.so.1",
 			}, false,
 		}, {
-			pb.FileSpec{
+			&pb.FileSpec{
 				Path:    "../../native_client/toolchain/linux_x86/pnacl_newlib/bin/clang++",
 				Symlink: "libc++.so.1.0",
 			},
@@ -140,7 +138,7 @@ func TestFileSpecToEntry(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		entry, err := fileSpecToEntry(context.Background(), &test.input, dummyCmdStorage{})
+		entry, err := fileSpecToEntry(context.Background(), test.input, dummyCmdStorage{})
 		if !reflect.DeepEqual(entry, test.wantEntry) || test.wantErr != (err != nil) {
 			t.Errorf("fileSpecToEntry(ctx, %v, dummyCmdStorage)=%v, %v, want=%v, wantErr=%v", test.input,
 				entry, err, test.wantEntry, test.wantErr)

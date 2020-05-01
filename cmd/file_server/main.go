@@ -11,6 +11,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 
 	"cloud.google.com/go/storage"
 	"go.opencensus.io/trace"
@@ -27,6 +28,7 @@ import (
 	"go.chromium.org/goma/server/log"
 	"go.chromium.org/goma/server/profiler"
 	"go.chromium.org/goma/server/server"
+	"go.chromium.org/goma/server/server/healthz"
 
 	cachepb "go.chromium.org/goma/server/proto/cache"
 	pb "go.chromium.org/goma/server/proto/file"
@@ -48,6 +50,7 @@ type admissionController struct {
 }
 
 func (a admissionController) AdmitPut(ctx context.Context, in *cachepb.PutReq) error {
+	logger := log.FromContext(ctx)
 	if a.limit <= 0 {
 		return nil
 	}
@@ -57,8 +60,14 @@ func (a admissionController) AdmitPut(ctx context.Context, in *cachepb.PutReq) e
 		return nil
 	}
 	newRSS := server.GC(ctx)
+	if newRSS+2*s <= a.limit {
+		logger.Infof("GC reduced memory size to %d", newRSS)
+		return nil
+	}
 	// TODO: with retryinfo?
-	return status.Errorf(codes.ResourceExhausted, "memory size %d + req:%d > limit %d: gc->%d", rss, s, a.limit, newRSS)
+	msg := fmt.Sprintf("memory size %d + req:%d > limit %d: gc->%d", rss, s, a.limit, newRSS)
+	healthz.SetUnhealthy(msg)
+	return status.Error(codes.ResourceExhausted, msg)
 }
 
 func main() {

@@ -2,9 +2,9 @@
 # Do not modify manually. All changes will be overwritten.
 
 infra/3pp/tools/go/linux-amd64
-	version:1.14.1
-	pqblas-RwD-1Ths7vq8uC2SkNfYXUe8l9Y5ygcpDmdwC
+	version:1.14.2
+	5X-axvSwNlp7JmgM6ca1mAeXKYVeQOgTkO4HyvchxxsC
 
 infra/tools/protoc/linux-amd64
-	protobuf_version:v3.7.0
-	pmLXDwrEZ3N2g3deymv-Dm3rhdYjU_UYWDUJ0bB3Kp8C
+	protobuf_version:v3.11.4
+	FcNzodTkFHz7Nrvv_hvhE32oOiZpJFCbCuyr4pWLetUC

@@ -614,7 +614,7 @@ type wrapperType int
 
 const (
 	wrapperRelocatable wrapperType = iota
-	wrapperBindMount
+	wrapperInputRootAbsolutePath
 	wrapperNsjailChroot
 	wrapperWin
 )
@@ -623,8 +623,8 @@ func (w wrapperType) String() string {
 	switch w {
 	case wrapperRelocatable:
 		return "wrapper-relocatable"
-	case wrapperBindMount:
-		return "wrapper-bind-mount"
+	case wrapperInputRootAbsolutePath:
+		return "wrapper-input-root-absolute-path"
 	case wrapperNsjailChroot:
 		return "wrapper-nsjail-chroot"
 	case wrapperWin:
@@ -635,40 +635,9 @@ func (w wrapperType) String() string {
 }
 
 const (
-	bindMountWrapperScript = `#!/bin/bash
-# run command (i.e. "$@") at the same dir as user.
-#  INPUT_ROOT_DIR: expected directory of input root.
-#    input root is current directory to run this script.
-#    need to mount input root on $INPUT_ROOT_DIR.
-#  WORK_DIR: working directory relative to INPUT_ROOT_DIR.
-#    command will run at $INPUT_ROOT_DIR/$WORK_DIR.
-set -e
-
-# check inputs.
-# TODO: report error on other channel than stderr.
-if [[ "$INPUT_ROOT_DIR" == "" ]]; then
-  echo "ERROR: INPUT_ROOT_DIR is not set" >&2
-  exit 1
-fi
-if [[ "$WORK_DIR" == "" ]]; then
-  echo "ERROR: WORK_DIR is not set" >&2
-  exit 1
-fi
-# if container image provides the script, use it instead.
-if [[ -x /opt/goma/bin/run-at-dir.sh ]]; then
-  exec /opt/goma/bin/run-at-dir.sh "$@"
-  echo "ERROR: exec /opt/goma/bin/run-at-dir.sh failed: $?" >&2
-  exit 1
-fi
-
-mkdir -p "${INPUT_ROOT_DIR}" || true # require root
-mount --bind "$(pwd)" "${INPUT_ROOT_DIR}" # require privileged
-cd "${INPUT_ROOT_DIR}/${WORK_DIR}"
-# TODO: run as normal user, not as root.
-# run as nobody will fail with "unable to open output file. permission denied"
-"$@"
-`
-
+	// TODO: use working_directory in action.
+	// need to fix output path to be relative to working_directory.
+	// http://b/113370588
 	relocatableWrapperScript = `#!/bin/bash
 set -e
 if [[ "$WORK_DIR" != "" ]]; then
@@ -718,7 +687,7 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 		} else {
 			err = relocatableReq(ctx, cmdConfig, r.filepath, r.gomaReq.Arg, r.gomaReq.Env)
 			if err != nil {
-				wt = wrapperBindMount
+				wt = wrapperInputRootAbsolutePath
 				logger.Infof("non relocatable: %v", err)
 			}
 		}
@@ -748,24 +717,17 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 				data: digest.Bytes("nsjail-config-file", []byte(nsjailCfg)),
 			},
 		}
-	case wrapperBindMount:
-		logger.Infof("run with bind mount")
-		envs = append(envs, fmt.Sprintf("INPUT_ROOT_DIR=%s", r.tree.RootDir()))
-		// needed for nsjail (bind mount).
+	case wrapperInputRootAbsolutePath:
+		logger.Infof("run with InputRootAbsolutePath")
 		// https://cloud.google.com/remote-build-execution/docs/remote-execution-properties#container_properties
-		// dockerAddCapabilities=SYS_ADMIN is not sufficient.
-		// need -security-opt=apparmor:unconfined too?
-		// https://github.com/moby/moby/issues/16429
-		r.addPlatformProperty(ctx, "dockerPrivileged", "true")
-		// needed for mkdir $INPUT_ROOT_DIR
-		r.addPlatformProperty(ctx, "dockerRunAsRoot", "true")
+		r.addPlatformProperty(ctx, "InputRootAbsolutePath", r.tree.RootDir())
 		for _, e := range r.gomaReq.Env {
 			envs = append(envs, e)
 		}
 		files = []fileDesc{
 			{
 				name:         posixWrapperName,
-				data:         digest.Bytes("nsjail-bind-mount-wrapper-script", []byte(bindMountWrapperScript)),
+				data:         digest.Bytes("relocatable-wrapper-script", []byte(relocatableWrapperScript)),
 				isExecutable: true,
 			},
 		}

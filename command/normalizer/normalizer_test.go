@@ -1,6 +1,4 @@
-// Copyright 2017 The Goma Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+// Copyright 2017 Google LLC. All Rights Reserved.
 
 package normalizer
 
@@ -330,18 +328,18 @@ func TestNormalizedTargetString(t *testing.T) {
 
 func TestSelector(t *testing.T) {
 	for _, tc := range []struct {
-		input     cmdpb.Selector
-		want      cmdpb.Selector
+		input     *cmdpb.Selector
+		want      *cmdpb.Selector
 		wantError bool
 	}{
 		{
-			input: cmdpb.Selector{
+			input: &cmdpb.Selector{
 				Name:       "clang",
 				Version:    "4.2.1[clang version 5.0.0 (trunk 300839)]",
 				Target:     "x86_64-unknown-linux-gnu",
 				BinaryHash: "5f650cc98121b383aaa25e53a135d8b4c5e0748f25082b4f2d428a5934d22fda",
 			},
-			want: cmdpb.Selector{
+			want: &cmdpb.Selector{
 				Name:       "clang",
 				Version:    "4.2.1[clang version 5.0.0 (trunk 300839)]",
 				Target:     "x86_64-linux",
@@ -349,25 +347,25 @@ func TestSelector(t *testing.T) {
 			},
 		},
 		{
-			input: cmdpb.Selector{
+			input: &cmdpb.Selector{
 				Name:       "clang",
 				Version:    "4.2.1[clang version 5.0.0 (trunk 300839)]",
 				BinaryHash: "5f650cc98121b383aaa25e53a135d8b4c5e0748f25082b4f2d428a5934d22fda",
 			},
-			want: cmdpb.Selector{
+			want: &cmdpb.Selector{
 				Name:       "clang",
 				Version:    "4.2.1[clang version 5.0.0 (trunk 300839)]",
 				BinaryHash: "5f650cc98121b383aaa25e53a135d8b4c5e0748f25082b4f2d428a5934d22fda",
 			},
 		},
 		{
-			input: cmdpb.Selector{
+			input: &cmdpb.Selector{
 				Name:       "javac",
 				Target:     "java",
 				Version:    "1.8.0_45-internal",
 				BinaryHash: "609aeefbab4b988d1a3705a3da442590c6f22aa8f27036f8a08deaabd3714c27",
 			},
-			want: cmdpb.Selector{
+			want: &cmdpb.Selector{
 				Name:       "javac",
 				Target:     "java",
 				Version:    "1.8.0_45-internal",
@@ -375,13 +373,13 @@ func TestSelector(t *testing.T) {
 			},
 		},
 		{
-			input: cmdpb.Selector{
+			input: &cmdpb.Selector{
 				Name:       "cl.exe",
 				Target:     "x64",
 				Version:    "19.11.25505",
 				BinaryHash: "5d734edd36be5be66be72f543522e95368a88da687467b5797137e47cbdeecd0",
 			},
-			want: cmdpb.Selector{
+			want: &cmdpb.Selector{
 				Name:       "cl.exe",
 				Target:     "x64",
 				Version:    "19.11.25505",
@@ -389,7 +387,7 @@ func TestSelector(t *testing.T) {
 			},
 		},
 		{
-			input: cmdpb.Selector{
+			input: &cmdpb.Selector{
 				Name:       "clang",
 				Version:    "4.2.1[clang version 5.0.0 (trunk 300839)]",
 				Target:     "x86_64-unknown-linux-gnu-should-parse-error",
@@ -400,13 +398,13 @@ func TestSelector(t *testing.T) {
 	} {
 		actual, err := Selector(tc.input)
 		if err != nil && !tc.wantError {
-			t.Errorf("Selector(%q)=_,%v; want nil", tc.input, err)
+			t.Errorf("Selector(%v)=_,%v; want nil", tc.input, err)
 		}
 		if err == nil && tc.wantError {
-			t.Errorf("Selector(%q)=_,nil; want err", tc.input)
+			t.Errorf("Selector(%v)=_,nil; want err", tc.input)
 		}
-		if err == nil && !proto.Equal(&actual, &tc.want) {
-			t.Errorf("Selector(%q)=%q; want %q", tc.input, actual, tc.want)
+		if err == nil && !proto.Equal(actual, tc.want) {
+			t.Errorf("Selector(%v)=%v; want %v", tc.input, &actual, tc.want)
 		}
 	}
 }

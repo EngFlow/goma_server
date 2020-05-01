@@ -1,6 +1,4 @@
-// Copyright 2017 The Goma Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+// Copyright 2017 Google LLC. All Rights Reserved.
 
 package exec
 
@@ -205,12 +203,12 @@ func (in *Inventory) Configure(ctx context.Context, cfgs *cmdpb.ConfigResp) erro
 			logger.Warnf("no cmd descriptor in %s", cfg)
 			continue
 		}
-		selpb, err := normalizer.Selector(*cfg.CmdDescriptor.Selector)
+		selpb, err := normalizer.Selector(cfg.CmdDescriptor.Selector)
 		if err != nil {
 			logger.Errorf("failed to normalize selector in %s", cfg)
 			continue
 		}
-		sel := fromSelectorProto(&selpb)
+		sel := fromSelectorProto(selpb)
 		if cfg.CmdDescriptor.GetSetup().GetPathType() == cmdpb.CmdDescriptor_UNKNOWN_PATH_TYPE {
 			logger.Errorf("unknown path type in %s %s", sel, cfg)
 			continue
@@ -572,7 +570,7 @@ func setPicked(result *gomapb.ExecResult, cfg *cmdpb.Config, path2sel map[string
 }
 
 func fromCommandSpec(spec *gomapb.CommandSpec) (selector, string, error) {
-	s, err := normalizer.Selector(cmdpb.Selector{
+	s, err := normalizer.Selector(&cmdpb.Selector{
 		Name:       spec.GetName(),
 		Version:    spec.GetVersion(),
 		Target:     spec.GetTarget(),
@@ -581,7 +579,7 @@ func fromCommandSpec(spec *gomapb.CommandSpec) (selector, string, error) {
 	if err != nil {
 		return selector{}, "", err
 	}
-	return fromSelectorProto(&s), spec.GetLocalCompilerPath(), nil
+	return fromSelectorProto(s), spec.GetLocalCompilerPath(), nil
 }
 
 func fromSubprogramSpec(spec *gomapb.SubprogramSpec) selector {

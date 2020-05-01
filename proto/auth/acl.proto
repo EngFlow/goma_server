@@ -6,6 +6,8 @@ syntax = "proto3";
 
 package auth;
 
+option go_package = "go.chromium.org/goma/server/proto/auth";
+
 // Simple ACL.
 // https://docs.google.com/document/d/1xv8M0WqQyAanj-fM5Rv3wOMEis06HRwVEFLXjINOwC0/edit
 

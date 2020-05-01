@@ -6,9 +6,12 @@
 
 syntax = "proto2";
 
+package devtools_goma;
+
+option go_package = "go.chromium.org/goma/server/proto/api";
+
 import "google/protobuf/timestamp.proto";
 
-package devtools_goma;
 
 // persistent data
 

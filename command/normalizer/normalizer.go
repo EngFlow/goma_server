@@ -1,6 +1,4 @@
-// Copyright 2017 The Goma Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+// Copyright 2017 Google LLC. All Rights Reserved.
 
 package normalizer
 
@@ -9,6 +7,8 @@ import (
 	"strings"
 
 	cmdpb "go.chromium.org/goma/server/proto/command"
+
+	"github.com/golang/protobuf/proto"
 )
 
 type target struct {
@@ -93,7 +93,7 @@ func Target(t string) (string, error) {
 }
 
 // Selector returns a selector whose target is normalized.
-func Selector(s cmdpb.Selector) (cmdpb.Selector, error) {
+func Selector(s *cmdpb.Selector) (*cmdpb.Selector, error) {
 	if s.Target == "" || s.Target == "java" {
 		return s, nil
 	}
@@ -104,8 +104,9 @@ func Selector(s cmdpb.Selector) (cmdpb.Selector, error) {
 
 	t, err := Target(s.GetTarget())
 	if err != nil {
-		return cmdpb.Selector{}, err
+		return &cmdpb.Selector{}, err
 	}
+	s = proto.Clone(s).(*cmdpb.Selector)
 	s.Target = t
 	return s, nil
 }

@@ -5,13 +5,14 @@
 
 syntax = "proto2";
 
-import "api/goma_log.proto";
-
 package devtools_goma;
 
+option go_package = "go.chromium.org/goma/server/proto/execlog";
 option cc_generic_services = false;
 option java_generic_services = false;
 option py_generic_services = false;
+
+import "api/goma_log.proto";
 
 service LogService {
   rpc SaveLog(SaveLogReq) returns (SaveLogResp) {

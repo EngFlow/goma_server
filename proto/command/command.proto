@@ -4,10 +4,12 @@
 
 syntax = "proto3";
 
+package command;
+
+option go_package = "go.chromium.org/goma/server/proto/command";
+
 import "api/goma_data.proto";
 import "google/protobuf/timestamp.proto";
-
-package command;
 
 // Selector is a command selector.
 // it is used to select a compiler or a subprogram/plugin to run on

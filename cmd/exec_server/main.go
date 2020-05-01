@@ -40,6 +40,7 @@ import (
 	"go.chromium.org/goma/server/cache/redis"
 	"go.chromium.org/goma/server/command"
 	"go.chromium.org/goma/server/exec"
+	"go.chromium.org/goma/server/file"
 	"go.chromium.org/goma/server/log"
 	"go.chromium.org/goma/server/log/errorreporter"
 	"go.chromium.org/goma/server/profiler"
@@ -320,7 +321,8 @@ func main() {
 		logger.Fatal(err)
 	}
 
-	fileConn, err := server.DialContext(ctx, *fileAddr)
+	fileConn, err := server.DialContext(ctx, *fileAddr,
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(file.DefaultMaxMsgSize), grpc.MaxCallSendMsgSize(file.DefaultMaxMsgSize)))
 	if err != nil {
 		logger.Fatalf("dial %s: %v", *fileAddr, err)
 	}

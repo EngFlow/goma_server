@@ -2,6 +2,8 @@ syntax = "proto2";
 
 package nsjail;
 
+option go_package = "go.chromium.org/goma/server/proto/nsjail";
+
 enum Mode {
     LISTEN = 0; /* Listening on a TCP port */
     ONCE = 1;   /* Running the command once only */

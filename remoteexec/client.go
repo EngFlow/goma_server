@@ -229,6 +229,8 @@ func erespErr(ctx context.Context, eresp *rpb.ExecuteResponse) error {
 	//   Due to transient condition, such as all workers being
 	//   occupied (and the server does not support a queue), the
 	//   action could not be started. The client should retry.
+	// RESOURCE_EXHAUSTED:
+	//   There is insufficient quota of some resource to run the action.
 	// INTERNAL
 	//   An internal error occurred in the execution engine or the worker.
 	//   could be handled as unavailable error.
@@ -236,7 +238,7 @@ func erespErr(ctx context.Context, eresp *rpb.ExecuteResponse) error {
 	// Other error would be non retriable.
 	switch codes.Code(st.GetCode()) {
 	case codes.OK:
-	case codes.FailedPrecondition, codes.Internal:
+	case codes.FailedPrecondition, codes.ResourceExhausted, codes.Internal:
 		logger.Warnf("execute response: status=%s", st)
 		fallthrough
 	case codes.Unavailable:

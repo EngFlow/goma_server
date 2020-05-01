@@ -9,6 +9,8 @@ syntax = "proto2";
 
 package devtools_goma;
 
+option go_package = "go.chromium.org/goma/server/proto/api";
+
 // NEXT ID TO USE: 92
 message ExecLog {
   enum AuthenticationType {

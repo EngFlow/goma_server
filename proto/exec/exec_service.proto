@@ -4,13 +4,14 @@
 
 syntax = "proto2";
 
-import "api/goma_data.proto";
-
 package devtools_goma;
 
+option go_package = "go.chromium.org/goma/server/proto/exec";
 option cc_generic_services = false;
 option java_generic_services = false;
 option py_generic_services = false;
+
+import "api/goma_data.proto";
 
 // TODO: reconsider good error codes.
 enum ExecServiceApplicationError {

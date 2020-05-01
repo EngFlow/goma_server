@@ -18,3 +18,5 @@ $ git clone https://github.com/google/nsjail.git
 ```shell
 $ cp nsjail/config.proto .
 ```
+
+1. Add `option go_package = "go.chromium.org/goma/server/proto/nsjail";`

@@ -6,6 +6,8 @@ syntax = "proto3";
 
 package cache;
 
+option go_package = "go.chromium.org/goma/server/proto/cache";
+
 message KV {
   string key = 1;
   bytes  value = 2;

@@ -4,9 +4,11 @@
 
 syntax = "proto3";
 
-import "auth/authdb.proto";
-
 package auth;
+
+option go_package = "go.chromium.org/goma/server/proto/auth";
+
+import "auth/authdb.proto";
 
 service AuthDBService {
   rpc CheckMembership(CheckMembershipReq) returns (CheckMembershipResp) {}

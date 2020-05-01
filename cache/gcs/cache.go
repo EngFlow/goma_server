@@ -10,9 +10,11 @@ import (
 	"crypto/md5"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
+	"math/rand"
 	"sync/atomic"
 	"time"
 
@@ -78,17 +80,8 @@ func checkAttrs(attr *storage.ObjectAttrs, value []byte) error {
 	return nil
 }
 
-func (c *Cache) Put(ctx context.Context, in *pb.PutReq) (*pb.PutResp, error) {
+func (c *Cache) put(ctx context.Context, obj *storage.ObjectHandle, key string, value []byte, t time.Time) (*pb.PutResp, error) {
 	logger := log.FromContext(ctx)
-	if err := c.AdmissionController.AdmitPut(ctx, in); err != nil {
-		logger.Warnf("admission error: %v", err)
-		return nil, err
-	}
-	key := in.Kv.Key
-	value := in.Kv.Value
-	t := time.Now()
-
-	obj := c.bkt.Object(key)
 	attr, err := obj.Attrs(ctx)
 	if err == nil {
 		err = checkAttrs(attr, value)
@@ -124,6 +117,55 @@ func (c *Cache) Put(ctx context.Context, in *pb.PutReq) (*pb.PutResp, error) {
 	attr = w.Attrs()
 	logger.Infof("gcs.put   %s %d %s crc32c:%s md5:%s gen:%d %d", key, len(value), time.Since(t), crc32cStr(attr.CRC32C), md5sumStr(attr.MD5), attr.Generation, attr.Metageneration)
 	return &pb.PutResp{}, nil
+}
+
+func (c *Cache) Put(ctx context.Context, in *pb.PutReq) (*pb.PutResp, error) {
+	logger := log.FromContext(ctx)
+	if err := c.AdmissionController.AdmitPut(ctx, in); err != nil {
+		logger.Warnf("admission error: %v", err)
+		return nil, err
+	}
+	key := in.Kv.Key
+	value := in.Kv.Value
+	t := time.Now()
+
+	obj := c.bkt.Object(key)
+	for retry := 0; ; retry++ {
+		resp, err := c.put(ctx, obj, key, value, t)
+		if err == nil {
+			return resp, err
+		}
+		var gerr *googleapi.Error
+		if !errors.As(err, &gerr) {
+			return resp, err
+		}
+		if gerr.Code != 429 {
+			return resp, err
+		}
+		// https://cloud.google.com/storage/quotas#objects
+		// an update limit on each object of once per second.
+		// http://b/145956239 gcp rate limit exceeded?
+		backoff := float64(500)
+		for n := retry; n > 0; n-- {
+			backoff *= 1.6
+		}
+		const maxBackoff = 2000.0
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+		backoff *= 1 + 0.2*(rand.Float64()*2-1)
+		const minBackoff = 50
+		if backoff < minBackoff {
+			backoff = minBackoff
+		}
+		w := time.Duration(backoff) * time.Millisecond
+		logger.Warnf("gcs.put rate limit for %s. backoff %s", key, w)
+		select {
+		case <-time.After(w):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 }
 
 func (c *Cache) Get(ctx context.Context, in *pb.GetReq) (*pb.GetResp, error) {

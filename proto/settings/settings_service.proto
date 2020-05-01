@@ -4,9 +4,11 @@
 
 syntax = "proto3";
 
-import "settings/settings.proto";
-
 package settings;
+
+option go_package = "go.chromium.org/goma/server/proto/settings";
+
+import "settings/settings.proto";
 
 service SettingsService {
   rpc Get(SettingsReq) returns (SettingsResp) {}

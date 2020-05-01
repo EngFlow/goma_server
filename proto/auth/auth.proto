@@ -4,9 +4,11 @@
 
 syntax = "proto3";
 
-import "google/protobuf/timestamp.proto";
-
 package auth;
+
+option go_package = "go.chromium.org/goma/server/proto/auth";
+
+import "google/protobuf/timestamp.proto";
 
 message AuthReq {
   string authorization = 1;

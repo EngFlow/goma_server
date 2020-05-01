@@ -6,6 +6,8 @@ syntax = "proto3";
 
 package auth;
 
+option go_package = "go.chromium.org/goma/server/proto/auth";
+
 message CheckMembershipReq {
   string email = 1;
   string group = 2;

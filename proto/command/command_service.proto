@@ -4,6 +4,7 @@
 
 syntax = "proto3";
 
-
 package command;
+
+option go_package = "go.chromium.org/goma/server/proto/command";
 

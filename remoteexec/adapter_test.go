@@ -1045,10 +1045,6 @@ func TestAdaptorHandleArbitraryToolchainSupportNonRelocatable(t *testing.T) {
 	}
 	wantEnvs := []*rpb.Command_EnvironmentVariable{
 		{
-			Name:  "INPUT_ROOT_DIR",
-			Value: "/b/c/w",
-		},
-		{
 			Name:  "PWD",
 			Value: "/b/c/w/out/Debug",
 		},
@@ -1059,6 +1055,21 @@ func TestAdaptorHandleArbitraryToolchainSupportNonRelocatable(t *testing.T) {
 	}
 	if !cmp.Equal(command.EnvironmentVariables, wantEnvs, cmp.Comparer(proto.Equal)) {
 		t.Errorf("environment_variables=%s; want=%s", command.EnvironmentVariables, wantEnvs)
+	}
+	wantProperties := []*rpb.Platform_Property{
+		{
+			Name:  "InputRootAbsolutePath",
+			Value: "/b/c/w",
+		},
+		{
+			Name:  "container-image",
+			Value: "docker://grpc.io/goma-dev/container-image@sha256:yyyy",
+		},
+	}
+	if command.Platform == nil {
+		t.Errorf("platform is nil")
+	} else if !cmp.Equal(command.Platform.Properties, wantProperties, cmp.Comparer(proto.Equal)) {
+		t.Errorf("platform.properties=%s; want=%s", command.Platform.Properties, wantProperties)
 	}
 
 	action := cluster.rbe.gotAction
@@ -1085,7 +1096,7 @@ func TestAdaptorHandleArbitraryToolchainSupportNonRelocatable(t *testing.T) {
 		}
 	}
 
-	if got, want := files["out/Debug/run.sh"].digest, digest.Bytes("wrapper-script", []byte(bindMountWrapperScript)).Digest(); !proto.Equal(got, want) {
+	if got, want := files["out/Debug/run.sh"].digest, digest.Bytes("wrapper-script", []byte(relocatableWrapperScript)).Digest(); !proto.Equal(got, want) {
 		t.Errorf("digest of out/Debug/run.sh: %s != %s", got, want)
 	}
 }
@@ -1108,12 +1119,8 @@ func TestAdapterDockerProperties(t *testing.T) {
 			args: []string{"-g"},
 			want: []*rpb.Platform_Property{
 				{
-					Name:  "dockerPrivileged",
-					Value: "true",
-				},
-				{
-					Name:  "dockerRunAsRoot",
-					Value: "true",
+					Name:  "InputRootAbsolutePath",
+					Value: "/b/c/w",
 				},
 			},
 		},

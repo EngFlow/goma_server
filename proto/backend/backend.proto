@@ -6,6 +6,8 @@ syntax = "proto3";
 
 package backend;
 
+option go_package = "go.chromium.org/goma/server/proto/backend";
+
 message LocalBackend {
   // address of exec server. default "exec-server:5050"
   string exec_addr = 1;

@@ -6,6 +6,8 @@ syntax = "proto3";
 
 package settings;
 
+option go_package = "go.chromium.org/goma/server/proto/settings";
+
 message Settings {
   string name = 3;
 
