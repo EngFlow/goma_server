@@ -15,16 +15,8 @@ API](https://github.com/bazelbuild/remote-apis)
 to distribute compile requests across a collection of worker machines and to
 cache the results of compilations. The Remote Execution API is an open-source
 standard, with multiple service implementations. The Goma server has been tested
-with Google's Remote Build Execution service, but could use other service
-implementations with some minor tweaks to the service code.
-
-To learn more about Remote Build Execution, which is currently an alpha service,
-you can view the whitelisted documentation by joining
-[this group](https://groups.google.com/forum/#!forum/rbe-alpha-customers).
-If you would like to try using Goma with Remote Build Execution, you can follow
-[these instructions](https://cloud.google.com/remote-build-execution/docs/tutorial-using-goma-with-rbe).
-(note: you must join the documentation whitelist group to view the
-instructions).
+with Google's internal Remote Build Execution service, but could use other
+service implementations with some minor tweaks to the service code.
 
 ## How to build
 
