@@ -275,6 +275,12 @@ func TestGccRelocatableReq(t *testing.T) {
 				"-fcrash-diagnostics-dir=/b/c/b/linux/src/tools/clang/crashreports"),
 			relocatable: false,
 		},
+		{
+			desc: "static-libgcc",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-static-libgcc"),
+			relocatable: true,
+		},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
 			err := gccRelocatableReq(posixpath.FilePath{}, tc.args, tc.envs)

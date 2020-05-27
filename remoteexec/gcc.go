@@ -163,6 +163,7 @@ Loop:
 		case strings.HasPrefix(arg, "--param="):
 		case arg == "-MMD" || arg == "-MD" || arg == "-M":
 		case arg == "-Qunused-arguments":
+		case arg == "-static-libgcc":
 			continue
 
 		case arg == "-o":

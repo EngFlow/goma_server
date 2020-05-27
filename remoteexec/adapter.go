@@ -197,6 +197,11 @@ func (f *Adapter) ensureCapabilities(ctx context.Context) {
 
 func (f *Adapter) newRequest(ctx context.Context, gomaReq *gomapb.ExecReq) *request {
 	logger := log.FromContext(ctx)
+	userGroup := "unknown-group"
+	endUser, ok := enduser.FromContext(ctx)
+	if ok {
+		userGroup = endUser.Group
+	}
 	gs := digest.NewStore()
 	timeout := f.ExecTimeout
 	if timeout == 0 {
@@ -204,8 +209,9 @@ func (f *Adapter) newRequest(ctx context.Context, gomaReq *gomapb.ExecReq) *requ
 	}
 	client := f.client(ctx)
 	r := &request{
-		f:      f,
-		client: client,
+		f:         f,
+		userGroup: userGroup,
+		client:    client,
 		cas: &cas.CAS{
 			Client:            client,
 			Store:             gs,
@@ -223,7 +229,7 @@ func (f *Adapter) newRequest(ctx context.Context, gomaReq *gomapb.ExecReq) *requ
 			DoNotCache: doNotCache(gomaReq),
 		},
 	}
-	logger.Infof("%s: new request", r.ID())
+	logger.Infof("%s: new request group:%q", r.ID(), userGroup)
 	return r
 }
 

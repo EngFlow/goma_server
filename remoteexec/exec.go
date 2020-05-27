@@ -39,9 +39,10 @@ import (
 )
 
 type request struct {
-	f        *Adapter
-	gomaReq  *gomapb.ExecReq
-	gomaResp *gomapb.ExecResp
+	f         *Adapter
+	userGroup string
+	gomaReq   *gomapb.ExecReq
+	gomaResp  *gomapb.ExecResp
 
 	client Client
 	cas    *cas.CAS
@@ -617,6 +618,7 @@ const (
 	wrapperInputRootAbsolutePath
 	wrapperNsjailChroot
 	wrapperWin
+	wrapperWinInputRootAbsolutePath
 )
 
 func (w wrapperType) String() string {
@@ -629,6 +631,8 @@ func (w wrapperType) String() string {
 		return "wrapper-nsjail-chroot"
 	case wrapperWin:
 		return "wrapper-win"
+	case wrapperWinInputRootAbsolutePath:
+		return "wrapper-win-input-root-absolute-path"
 	default:
 		return fmt.Sprintf("wrapper-unknown-%d", int(w))
 	}
@@ -692,7 +696,13 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 			}
 		}
 	case cmdpb.CmdDescriptor_WINDOWS:
-		wt = wrapperWin
+		err = relocatableReq(ctx, cmdConfig, r.filepath, r.gomaReq.Arg, r.gomaReq.Env)
+		if err != nil {
+			wt = wrapperWinInputRootAbsolutePath
+			logger.Infof("non relocatable: %v", err)
+		} else {
+			wt = wrapperWin
+		}
 	default:
 		return fmt.Errorf("bad path type: %v", pathType)
 	}
@@ -751,6 +761,21 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 		}
 	case wrapperWin:
 		logger.Infof("run on win")
+		wn, data, err := wrapperForWindows(ctx)
+		if err != nil {
+			return err
+		}
+		files = []fileDesc{
+			{
+				name:         wn,
+				data:         data,
+				isExecutable: true,
+			},
+		}
+	case wrapperWinInputRootAbsolutePath:
+		logger.Infof("run on win with InputRootAbsolutePath")
+		// https://cloud.google.com/remote-build-execution/docs/remote-execution-properties#container_properties
+		r.addPlatformProperty(ctx, "InputRootAbsolutePath", r.tree.RootDir())
 		wn, data, err := wrapperForWindows(ctx)
 		if err != nil {
 			return err
@@ -835,7 +860,7 @@ func relocatableReq(ctx context.Context, cmdConfig *cmdpb.Config, filepath clien
 	case "gcc", "g++", "clang", "clang++":
 		return gccRelocatableReq(filepath, args, envs)
 	case "clang-cl":
-		return clangclRelocatableReq(args, envs)
+		return clangclRelocatableReq(filepath, args, envs)
 	case "javac":
 		// Currently, javac in Chromium is fully relocatable. Simpler just to
 		// support only the relocatable case and let it fail if the client passed
