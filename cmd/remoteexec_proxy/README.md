@@ -92,7 +92,7 @@ func init() {
 	*port = 8080
 	*remoteexecAddr = "remotebuildexecution.googleapis.com:443"
 	*remoteInstanceName = "projects/$PROJECT_ID/instances/default_instance"
-	*whitelistedUsers = "<comma separated whitelisted-users-email-address>"
+	*allowedUsers = "<comma separated allowed-users-email-address>"
 	*platformContainerImage = "docker://gcr.io/..."
 	*fileCacheBucket = "$PROJECT_ID-file-cache"
 }

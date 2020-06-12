@@ -63,7 +63,7 @@ var (
 
 	remoteexecAddr         = flag.String("remoteexec-addr", "", "remoteexec API endpoint")
 	remoteInstanceName     = flag.String("remote-instance-name", "", "remote instance name")
-	whitelistedUsers       = flag.String("whitelisted-users", "", "comma separated list of whitelisted user. `*@domain` will match any user in domain. if empty, current user is allowed.")
+	allowedUsers           = flag.String("allowed-users", "", "comma separated list of allowed users. `*@domain` will match any user in domain. if empty, current user is allowed.")
 	serviceAccountJSON     = flag.String("service-account-json", "", "service account json, used to talk to RBE and cloud storage (if --file-cache-bucket is used)")
 	platformContainerImage = flag.String("platform-container-image", "", "docker uri of platform container image")
 	insecureRemoteexec     = flag.Bool("insecure-remoteexec", false, "insecure grpc for remoteexec API")
@@ -84,13 +84,13 @@ func myEmail(ctx context.Context) string {
 	if username == "" {
 		u, err := user.Current()
 		if err != nil {
-			logger.Fatalf("failed to get username: need --whitelisted-users: %v", err)
+			logger.Fatalf("failed to get username: need --allowed-users: %v", err)
 		}
 		username = u.Username
 	}
 	buf, err := ioutil.ReadFile("/etc/mailname")
 	if err != nil {
-		logger.Fatalf("failed to get email: need --whiltelisted-users: %v", err)
+		logger.Fatalf("failed to get email: need --allowed-users: %v", err)
 	}
 	return fmt.Sprintf("%s@%s", username, strings.TrimSpace(string(buf)))
 }
@@ -136,8 +136,8 @@ func (c cacheClient) Put(ctx context.Context, req *cachepb.PutReq, opts ...grpc.
 const gomaClientClientID = "687418631491-r6m1c3pr0lth5atp4ie07f03ae8omefc.apps.googleusercontent.com"
 
 type defaultACL struct {
-	whitelistedUser    []string
-	whitelistedDomains []string
+	allowedUser    []string
+	allowedDomains []string
 }
 
 func (a defaultACL) Load(ctx context.Context) (*authpb.ACL, error) {
@@ -151,8 +151,8 @@ func (a defaultACL) Load(ctx context.Context) (*authpb.ACL, error) {
 			{
 				Id:             "user",
 				Audience:       gomaClientClientID,
-				Emails:         a.whitelistedUser,
-				Domains:        a.whitelistedDomains,
+				Emails:         a.allowedUser,
+				Domains:        a.allowedDomains,
 				ServiceAccount: serviceAccount,
 			},
 		},
@@ -261,20 +261,20 @@ func main() {
 	logger := log.FromContext(ctx)
 	defer logger.Sync()
 
-	if *whitelistedUsers == "" {
-		*whitelistedUsers = myEmail(ctx)
+	if *allowedUsers == "" {
+		*allowedUsers = myEmail(ctx)
 	}
-	var whitelisted []string
-	var whitelistedDomains []string
-	for _, u := range strings.Split(*whitelistedUsers, ",") {
+	var allowed []string
+	var allowedDomains []string
+	for _, u := range strings.Split(*allowedUsers, ",") {
 		u = strings.TrimSpace(u)
 		if strings.HasPrefix(u, "*@") {
-			whitelistedDomains = append(whitelistedDomains, strings.TrimPrefix(u, "*@"))
+			allowedDomains = append(allowedDomains, strings.TrimPrefix(u, "*@"))
 		} else {
-			whitelisted = append(whitelisted, u)
+			allowed = append(allowed, u)
 		}
 	}
-	logger.Infof("allow access for %q / domains %q", whitelisted, whitelistedDomains)
+	logger.Infof("allow access for %q / domains %q", allowed, allowedDomains)
 
 	err := server.Init(ctx, *traceProjectID, "remoteexec-proxy")
 	if err != nil {
@@ -294,8 +294,8 @@ func main() {
 	}
 	aclCheck := acl.ACL{
 		Loader: defaultACL{
-			whitelistedUser:    whitelisted,
-			whitelistedDomains: whitelistedDomains,
+			allowedUser:    allowed,
+			allowedDomains: allowedDomains,
 		},
 		Checker: acl.Checker{
 			Pool: account.JSONDir{
@@ -455,7 +455,7 @@ func main() {
 
 <p><b>remoteexec-addr:</b> {{.RemoteexecAddr}}</p>
 <p><b>remote-instance-name:</b> {{.RemoteInstanceName}}</p>
-<p><b>whitelisted-users:</b> {{.WhitelistedUsers}}</p>
+<p><b>allowed-users:</b> {{.AllowedUsers}}</p>
 <p><b>service-account-json:</b> <a href="file://{{.ServiceAccountJSON}}">{{.ServiceAccountJSON}}</a></p>
 <p><b>platform-container-image:</b> {{.PlatformContainerImage}}</p>
 <p><b>redis:</b> {{.RedisAddr}}</p>
@@ -477,7 +477,7 @@ func main() {
 			Port                   int
 			RemoteexecAddr         string
 			RemoteInstanceName     string
-			WhitelistedUsers       []string
+			AllowedUsers           []string
 			ServiceAccountJSON     string
 			PlatformContainerImage string
 			RedisAddr              string
@@ -487,7 +487,7 @@ func main() {
 			Port:                   *port,
 			RemoteexecAddr:         *remoteexecAddr,
 			RemoteInstanceName:     *remoteInstanceName,
-			WhitelistedUsers:       whitelisted,
+			AllowedUsers:           allowed,
 			ServiceAccountJSON:     *serviceAccountJSON,
 			PlatformContainerImage: *platformContainerImage,
 			RedisAddr:              redisAddr,

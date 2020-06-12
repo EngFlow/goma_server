@@ -16,10 +16,10 @@ const (
 	GomaClientClientID = "687418631491-r6m1c3pr0lth5atp4ie07f03ae8omefc.apps.googleusercontent.com"
 )
 
-// DefaultWhitelist is a loader to provide default whitelist, which pass through EUC.
-type DefaultWhitelist struct{}
+// DefaultAllowlist is a loader to provide default allow list, which pass through EUC.
+type DefaultAllowlist struct{}
 
-func (DefaultWhitelist) Load(ctx context.Context) (*pb.ACL, error) {
+func (DefaultAllowlist) Load(ctx context.Context) (*pb.ACL, error) {
 	return &pb.ACL{
 		Groups: []*pb.Group{
 			{

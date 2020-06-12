@@ -16,7 +16,7 @@ type ACL struct {
 // Update loads acl by Loader and sets it to Checker.
 func (a *ACL) Update(ctx context.Context) error {
 	if a.Loader == nil {
-		a.Loader = DefaultWhitelist{}
+		a.Loader = DefaultAllowlist{}
 	}
 	config, err := a.Loader.Load(ctx)
 	if err != nil {

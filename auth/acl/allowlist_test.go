@@ -15,9 +15,9 @@ import (
 	"go.chromium.org/goma/server/auth"
 )
 
-func TestDefaultWhitelist(t *testing.T) {
+func TestDefaultAllowlist(t *testing.T) {
 	a := ACL{
-		Loader: DefaultWhitelist{},
+		Loader: DefaultAllowlist{},
 	}
 	ctx := context.Background()
 	err := a.Update(ctx)

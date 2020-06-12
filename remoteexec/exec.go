@@ -680,7 +680,7 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 	var files []fileDesc
 
 	args := buildArgs(ctx, cmdConfig, argv0, r.gomaReq)
-	// TODO: only allow whitelisted envs.
+	// TODO: only allow specific envs.
 
 	wt := wrapperRelocatable
 	pathType := cmdConfig.GetCmdDescriptor().GetSetup().GetPathType()

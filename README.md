@@ -67,7 +67,7 @@ specify service account JSON file for Remote Execution API by
 `--service-account-json`.
 
 Running user is granted by default. If you need to allow other users, you
-need to specify them by `--whitelisted-users`.
+need to specify them by `--allowed-users`.
 
 Log messages will be output to stderr.
 
