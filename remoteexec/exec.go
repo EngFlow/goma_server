@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math/rand"
 	"path"
 	"path/filepath"
 	"sort"
@@ -728,7 +729,13 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 			},
 		}
 	case wrapperInputRootAbsolutePath:
-		logger.Infof("run with InputRootAbsolutePath")
+		if rand.Float64() < r.f.HardeningRatio {
+			logger.Infof("run with InputRootAbsolutePath + runsc")
+			r.addPlatformProperty(ctx, "dockerRuntime", "runsc")
+			r.addPlatformProperty(ctx, "label:runsc", "available")
+		} else {
+			logger.Infof("run with InputRootAbsolutePath")
+		}
 		// https://cloud.google.com/remote-build-execution/docs/remote-execution-properties#container_properties
 		r.addPlatformProperty(ctx, "InputRootAbsolutePath", r.tree.RootDir())
 		for _, e := range r.gomaReq.Env {
@@ -742,7 +749,13 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 			},
 		}
 	case wrapperRelocatable:
-		logger.Infof("run with chdir: relocatable")
+		if rand.Float64() < r.f.HardeningRatio {
+			logger.Infof("run with chdir + runsc: relocatable")
+			r.addPlatformProperty(ctx, "dockerRuntime", "runsc")
+			r.addPlatformProperty(ctx, "label:runsc", "available")
+		} else {
+			logger.Infof("run with chdir: relocatable")
+		}
 		for _, e := range r.gomaReq.Env {
 			if strings.HasPrefix(e, "PWD=") {
 				// PWD is usually absolute path.
@@ -779,6 +792,15 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 		wn, data, err := wrapperForWindows(ctx)
 		if err != nil {
 			return err
+		}
+		// This is necessary for Win emscripten-releases LLVM build, which uses env vars to specify e.g. include
+		// dirs. See crbug.com/1040150.
+		// The build uses abs paths, which is why the env vars are stored here. Whether or not they should also
+		// be in stored in the case of `wrapperWin` is left for future consideration.
+		for _, e := range r.gomaReq.Env {
+			if strings.HasPrefix(e, "INCLUDE=") || strings.HasPrefix(e, "LIB=") {
+				envs = append(envs, e)
+			}
 		}
 		files = []fileDesc{
 			{

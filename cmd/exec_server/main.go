@@ -68,10 +68,12 @@ var (
 	remoteexecAddr       = flag.String("remoteexec-addr", "", "use remoteexec API endpoint")
 	remoteInstancePrefix = flag.String("remote-instance-prefix", "", "remote instance name path prefix.")
 	cmdFilesBucket       = flag.String("cmd-files-bucket", "", "cloud storage bucket for command binary files")
-	fetchConfigParallel  = flag.Bool("fetch-config-parallel", false, "fetch toolchain configs in parallel")
+	fetchConfigParallel  = flag.Bool("fetch-config-parallel", true, "fetch toolchain configs in parallel")
 
 	// Needed for b/120582303, but will be deprecated by b/80508682.
 	fileLookupConcurrency = flag.Int("file-lookup-concurrency", 20, "concurrency to look up files from file-server")
+
+	experimentHardeningRatio = flag.Float64("experiment-hardening-ratio", 0, "Ratio [0,1] to enable hardening. 0=no hardening. 1=all hardening.")
 )
 
 var (
@@ -377,6 +379,7 @@ func main() {
 		FileLookupSema:    make(chan struct{}, *fileLookupConcurrency),
 		CASBlobLookupSema: make(chan struct{}, casBlobLookupConcurrency),
 		OutputFileSema:    make(chan struct{}, outputFileConcurrency),
+		HardeningRatio:    *experimentHardeningRatio,
 	}
 
 	if *cmdFilesBucket == "" {

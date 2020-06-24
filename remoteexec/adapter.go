@@ -78,6 +78,9 @@ type Adapter struct {
 	// file server in gomaOutput.toFileBlob().
 	OutputFileSema chan struct{}
 
+	// Ratio to enable hardening.
+	HardeningRatio float64
+
 	capMu        sync.Mutex
 	capabilities *rpb.ServerCapabilities
 }

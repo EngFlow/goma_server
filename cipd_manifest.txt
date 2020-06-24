@@ -13,9 +13,9 @@ $VerifiedPlatform linux-amd64
 # https://chrome-infra-packages.appspot.com/
 
 # go
-infra/3pp/tools/go/${platform} version:1.14.3
+infra/3pp/tools/go/${platform} version:1.14.4
 
 # protoc
 # If the version you want is missing, please follow the instruction in:
 # https://chromium.googlesource.com/infra/infra/+/refs/heads/master/bootstrap/cipd/doc/infra/tools/protoc/
-infra/tools/protoc/${platform} protobuf_version:v3.12.0
+infra/tools/protoc/${platform} protobuf_version:v3.12.3

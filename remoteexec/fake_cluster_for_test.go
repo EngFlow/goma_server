@@ -33,52 +33,6 @@ import (
 	"go.chromium.org/goma/server/rpc/grpctest"
 )
 
-// setupFakeGomaFile sets up fake goma file_server and returns it's client
-// and stop function to clean it up.
-func setupFakeGomaFile() (client fpb.FileServiceClient, stop func(), err error) {
-	csrv := grpc.NewServer()
-	c, err := cache.New(cache.Config{
-		MaxBytes: 1 * 1024 * 1024 * 1024,
-	})
-	if err != nil {
-		return nil, func() {}, err
-	}
-	cachepb.RegisterCacheServiceServer(csrv, c)
-	addr, stopCache, err := grpctest.StartServer(csrv)
-	if err != nil {
-		return nil, func() {}, err
-	}
-	cconn, err := grpc.Dial(addr, grpc.WithInsecure())
-	if err != nil {
-		stopCache()
-		return nil, func() {}, err
-	}
-	srv := grpc.NewServer()
-	fs := &file.Service{
-		Cache: cachepb.NewCacheServiceClient(cconn),
-	}
-	fpb.RegisterFileServiceServer(srv, fs)
-	addr, stopFile, err := grpctest.StartServer(srv)
-	if err != nil {
-		cconn.Close()
-		stopCache()
-		return nil, func() {}, err
-	}
-	conn, err := grpc.Dial(addr, grpc.WithInsecure())
-	if err != nil {
-		stopFile()
-		cconn.Close()
-		stopCache()
-		return nil, func() {}, err
-	}
-	return fpb.NewFileServiceClient(conn), func() {
-		conn.Close()
-		stopFile()
-		cconn.Close()
-		stopCache()
-	}, nil
-}
-
 // fakeCluster represents fake goma cluster.
 type fakeCluster struct {
 	rbe  *fakeRBE
@@ -154,7 +108,7 @@ func (f *fakeCluster) setup(ctx context.Context, instancePrefix string) error {
 		return err
 	}
 	defers = append(defers, func() { f.cconn.Close() })
-	f.fsrv = grpc.NewServer()
+	f.fsrv = grpc.NewServer(grpc.MaxSendMsgSize(file.DefaultMaxMsgSize), grpc.MaxRecvMsgSize(file.DefaultMaxMsgSize))
 	f.gomafile = &file.Service{
 		Cache: cachepb.NewCacheServiceClient(f.cconn),
 	}
