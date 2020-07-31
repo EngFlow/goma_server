@@ -35,7 +35,6 @@ message Group {
   string service_account = 6;
 
   // If reject is true, deny access from this group.
-  // Used for blacklisting.
   bool reject = 7;
 }
 

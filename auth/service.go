@@ -145,12 +145,12 @@ func (s *Service) Auth(ctx context.Context, req *authpb.AuthReq) (*authpb.AuthRe
 		te = v.(*tokenCacheEntry)
 	}
 	if te.TokenInfo == nil {
-		return nil, grpc.Errorf(codes.Internal, "nil TokenInfo is given")
+		return nil, grpc.Errorf(codes.Internal, "nil TokenInfo is given for %q", te.Group)
 	}
 
 	expires, err := ptypes.TimestampProto(te.TokenInfo.ExpiresAt)
 	if err != nil {
-		return nil, grpc.Errorf(codes.OutOfRange, "bad ExpiresAt %s: %v", te.TokenInfo.ExpiresAt, err)
+		return nil, grpc.Errorf(codes.OutOfRange, "bad ExpiresAt %s for %q: %v", te.TokenInfo.ExpiresAt, te.Group, err)
 	}
 
 	var errorDescription string
@@ -161,18 +161,18 @@ func (s *Service) Auth(ctx context.Context, req *authpb.AuthReq) (*authpb.AuthRe
 		switch st.Code() {
 		case codes.OK:
 			quota = -1 // TODO: -1 is unlimited.
-			logger.Infof("token info error non-nil, but ok?: %v", st.Message())
+			logger.Infof("token info %q error non-nil, but ok?: %v", te.Group, st.Message())
 		case codes.PermissionDenied:
 			errorDescription = st.Message()
-			logger.Errorf("token permission denied: %v", te.TokenInfo.Err)
+			logger.Errorf("token info %q permission denied: %v", te.Group, te.TokenInfo.Err)
 		default:
 			errorDescription = "internal error"
-			logger.Errorf("token info error: %v", te.TokenInfo.Err)
+			logger.Errorf("token info %q error: %v", te.Group, te.TokenInfo.Err)
 		}
 	} else {
 		// non grpc error.
 		errorDescription = "internal error"
-		logger.Errorf("token info error: %v", te.TokenInfo.Err)
+		logger.Errorf("token info %q error: %v", te.Group, te.TokenInfo.Err)
 	}
 
 	resp := &authpb.AuthResp{

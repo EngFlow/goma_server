@@ -49,6 +49,7 @@ import (
 	filepb "go.chromium.org/goma/server/proto/file"
 	"go.chromium.org/goma/server/remoteexec"
 	"go.chromium.org/goma/server/remoteexec/digest"
+	"go.chromium.org/goma/server/rpc"
 	"go.chromium.org/goma/server/server"
 )
 
@@ -67,11 +68,21 @@ var (
 
 	remoteexecAddr       = flag.String("remoteexec-addr", "", "use remoteexec API endpoint")
 	remoteInstancePrefix = flag.String("remote-instance-prefix", "", "remote instance name path prefix.")
-	cmdFilesBucket       = flag.String("cmd-files-bucket", "", "cloud storage bucket for command binary files")
-	fetchConfigParallel  = flag.Bool("fetch-config-parallel", true, "fetch toolchain configs in parallel")
+
+	// http://b/141901653
+	execMaxRetryCount = flag.Int("exec-max-retry-count", 5, "max retry count for exec call. 0 is unlimited count, but bound to ctx timtout. Use small number for powerful clients to run local fallback quickly. Use large number for powerless clients to use remote more than local.")
+
+	cmdFilesBucket      = flag.String("cmd-files-bucket", "", "cloud storage bucket for command binary files")
+	fetchConfigParallel = flag.Bool("fetch-config-parallel", true, "fetch toolchain configs in parallel")
 
 	// Needed for b/120582303, but will be deprecated by b/80508682.
 	fileLookupConcurrency = flag.Int("file-lookup-concurrency", 20, "concurrency to look up files from file-server")
+
+	// chromium code as of July 2020 (*.c*, *.h) = 230k
+	// also chromium clobber bulids has ~60k gomacc invocation.
+	// thinlto would upload *.o and *.thinlto.
+	// rbe-staging1 uses 2.2M keys (< 512MB memory usage in redis).
+	maxDigestCacheEntries = flag.Int("max-digest-cache-entries", 2e6, "maximum entries in in-memory digest cache. 0 means unimited")
 
 	experimentHardeningRatio = flag.Float64("experiment-hardening-ratio", 0, "Ratio [0,1] to enable hardening. 0=no hardening. 1=all hardening.")
 )
@@ -267,10 +278,10 @@ func newDigestCache(ctx context.Context) remoteexec.DigestCache {
 	addr, err := redis.AddrFromEnv()
 	if err != nil {
 		logger.Warnf("redis disabled for gomafile-digest: %v", err)
-		return digest.NewCache(nil)
+		return digest.NewCache(nil, *maxDigestCacheEntries)
 	}
 	logger.Infof("redis enabled for gomafile-digest: %v", addr)
-	return digest.NewCache(redis.NewClient(ctx, addr, "gomafile-digest:"))
+	return digest.NewCache(redis.NewClient(ctx, addr, "gomafile-digest:"), *maxDigestCacheEntries)
 }
 
 func main() {
@@ -309,6 +320,10 @@ func main() {
 		logger.Fatal(err)
 	}
 	err = view.Register(remoteexec.DefaultViews...)
+	if err != nil {
+		logger.Fatal(err)
+	}
+	err = view.Register(digest.DefaultViews...)
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -369,6 +384,9 @@ func main() {
 		ExecTimeout:    15 * time.Minute,
 		Client: remoteexec.Client{
 			ClientConn: reConn,
+			Retry: rpc.Retry{
+				MaxRetry: *execMaxRetryCount,
+			},
 		},
 		GomaFile:    filepb.NewFileServiceClient(fileConn),
 		DigestCache: newDigestCache(ctx),

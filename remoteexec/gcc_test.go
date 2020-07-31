@@ -281,6 +281,84 @@ func TestGccRelocatableReq(t *testing.T) {
 				"-static-libgcc"),
 			relocatable: true,
 		},
+		{
+			desc: "idirafter relative",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-idirafter", "../../system/ulib/include"),
+			relocatable: true,
+		},
+		{
+			desc: "idirafter abs",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-idirafter", "/b/c/system/ulib/include"),
+			relocatable: false,
+		},
+		{
+			desc: "-mllvm -instcombine-lower-dbg-declare=0",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-mllvm", "-instcombine-lower-dbg-declare=0"),
+			relocatable: true,
+		},
+		{
+			desc: "-includeBuildConfig.h",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-includeBuildConfig.h"),
+			relocatable: true,
+		},
+		{
+			desc: "-include/usr/include/BuildConfig.h",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-include/usr/include/BuildConfig.h"),
+			relocatable: false,
+		},
+		{
+			desc: "--includeBuildConfig.h",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"--includeBuildConfig.h"),
+			relocatable: true,
+		},
+		{
+			desc: "--include/usr/include/BuildConfig.h",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"--include/usr/include/BuildConfig.h"),
+			relocatable: false,
+		},
+		{
+			desc: "--include=BuildConfig.h",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"--include=BuildConfig.h"),
+			relocatable: true,
+		},
+		{
+			desc: "--include=/usr/include/BuildConfig.h",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"--include=/usr/include/BuildConfig.h"),
+			relocatable: false,
+		},
+		{
+			desc: "-mllvm -basic-aa-recphi=0",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-mllvm", "-basic-aa-recphi=0"),
+			relocatable: true,
+		},
+		{
+			desc: "-pie",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-pie"),
+			relocatable: true,
+		},
+		{
+			desc: "-Xclang -debug-info-kind=constructor",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-Xclang", "-debug-info-kind=constructor"),
+			relocatable: true,
+		},
+		{
+			desc: "-mllvm -sanitizer-coverage-prune-blocks=1",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-mllvm", "-sanitizer-coverage-prune-blocks=1"),
+			relocatable: true,
+		},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
 			err := gccRelocatableReq(posixpath.FilePath{}, tc.args, tc.envs)

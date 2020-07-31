@@ -18,7 +18,7 @@ func TestCacheGet(t *testing.T) {
 	}
 	dc := NewCache(cache.LocalClient{
 		CacheServiceServer: c,
-	})
+	}, 1000)
 
 	ctx := context.Background()
 

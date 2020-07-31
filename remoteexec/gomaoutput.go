@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"time"
 
 	rpb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 
@@ -40,6 +41,19 @@ type gomaOutput struct {
 	gomaFile fpb.FileServiceClient
 }
 
+func retryCAS(ctx context.Context, f func(ctx context.Context) error) error {
+	timeout := 1 * time.Second
+	n := 0
+	return rpc.Retry{}.Do(ctx, func() error {
+		n++
+		timeout *= time.Duration(n)
+		ctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		err := f(ctx)
+		return fixRBEInternalError(err)
+	})
+}
+
 func (g gomaOutput) stdoutData(ctx context.Context, eresp *rpb.ExecuteResponse) {
 	if len(eresp.Result.StdoutRaw) > 0 {
 		g.gomaResp.Result.StdoutBuffer = eresp.Result.StdoutRaw
@@ -49,9 +63,8 @@ func (g gomaOutput) stdoutData(ctx context.Context, eresp *rpb.ExecuteResponse) 
 		return
 	}
 	var buf bytes.Buffer
-	err := rpc.Retry{}.Do(ctx, func() error {
-		err := cas.DownloadDigest(ctx, g.bs, &buf, g.instance, eresp.Result.StdoutDigest)
-		return fixRBEInternalError(err)
+	err := retryCAS(ctx, func(ctx context.Context) error {
+		return cas.DownloadDigest(ctx, g.bs, &buf, g.instance, eresp.Result.StdoutDigest)
 	})
 	if err != nil {
 		logger := log.FromContext(ctx)
@@ -71,9 +84,8 @@ func (g gomaOutput) stderrData(ctx context.Context, eresp *rpb.ExecuteResponse) 
 		return
 	}
 	var buf bytes.Buffer
-	err := rpc.Retry{}.Do(ctx, func() error {
-		err := cas.DownloadDigest(ctx, g.bs, &buf, g.instance, eresp.Result.StderrDigest)
-		return fixRBEInternalError(err)
+	err := retryCAS(ctx, func(ctx context.Context) error {
+		return cas.DownloadDigest(ctx, g.bs, &buf, g.instance, eresp.Result.StderrDigest)
 	})
 	if err != nil {
 		logger := log.FromContext(ctx)
@@ -86,10 +98,10 @@ func (g gomaOutput) stderrData(ctx context.Context, eresp *rpb.ExecuteResponse) 
 
 func (g gomaOutput) outputFileHelper(ctx context.Context, fname string, output *rpb.OutputFile) (*gomapb.ExecResult_Output, error) {
 	var blob *gomapb.FileBlob
-	err := rpc.Retry{}.Do(ctx, func() error {
+	err := retryCAS(ctx, func(ctx context.Context) error {
 		var err error
 		blob, err = g.toFileBlob(ctx, output)
-		return fixRBEInternalError(err)
+		return err
 	})
 	if err != nil {
 		logger := log.FromContext(ctx)
@@ -216,7 +228,7 @@ func (g gomaOutput) toFileBlob(ctx context.Context, output *rpb.OutputFile) (*go
 
 	logger := log.FromContext(ctx)
 
-	if output.Digest.SizeBytes < file.LargeFileThreshold {
+	if output.Digest.SizeBytes <= file.LargeFileThreshold {
 		// for single FileBlob.
 		var buf bytes.Buffer
 		err := cas.DownloadDigest(ctx, g.bs, &buf, g.instance, output.Digest)
@@ -299,9 +311,8 @@ func (g gomaOutput) outputDirectory(ctx context.Context, filepath clientFilePath
 		return
 	}
 	var buf bytes.Buffer
-	err := rpc.Retry{}.Do(ctx, func() error {
-		err := cas.DownloadDigest(ctx, g.bs, &buf, g.instance, output.TreeDigest)
-		return fixRBEInternalError(err)
+	err := retryCAS(ctx, func(ctx context.Context) error {
+		return cas.DownloadDigest(ctx, g.bs, &buf, g.instance, output.TreeDigest)
 	})
 	if err != nil {
 		logger.Errorf("failed to download tree %s: %v", dname, err)

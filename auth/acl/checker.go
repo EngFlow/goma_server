@@ -99,7 +99,7 @@ func (c *Checker) CheckToken(ctx context.Context, token *oauth2.Token, tokenInfo
 		logger.Debugf("in group:%s", g.Id)
 		if g.Reject {
 			logger.Errorf("group:%s rejected", g.Id)
-			return "", nil, grpc.Errorf(codes.PermissionDenied, "access rejected")
+			return g.Id, nil, grpc.Errorf(codes.PermissionDenied, "access rejected")
 		}
 		if g.ServiceAccount == "" {
 			logger.Debugf("group:%s use EUC", g.Id)
@@ -109,12 +109,12 @@ func (c *Checker) CheckToken(ctx context.Context, token *oauth2.Token, tokenInfo
 		sa := c.accounts[g.ServiceAccount]
 		if sa == nil {
 			logger.Errorf("group:%s service account not found: %s", g.Id, g.ServiceAccount)
-			return "", nil, grpc.Errorf(codes.Internal, "service account not found: %s", g.ServiceAccount)
+			return g.Id, nil, grpc.Errorf(codes.Internal, "service account not found: %s", g.ServiceAccount)
 		}
 		saToken, err := sa.Token(ctx)
 		if err != nil {
 			logger.Errorf("group:%s service account:%s error:%v", g.Id, g.ServiceAccount, err)
-			return "", nil, grpc.Errorf(codes.Internal, "service account:%s error:%v", g.ServiceAccount, err)
+			return g.Id, nil, grpc.Errorf(codes.Internal, "service account:%s error:%v", g.ServiceAccount, err)
 		}
 		logger.Debugf("group:%s use service account:%s", g.Id, g.ServiceAccount)
 		return g.Id, saToken, nil

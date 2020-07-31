@@ -191,6 +191,12 @@ func TestClangclRelocatableReq(t *testing.T) {
 			unknownFlag: true,
 		},
 		{
+			desc:        "non-scoped showIncludes",
+			args:        modifyArgs(baseReleaseArgs, "/showIncludes:user", "/showIncludes"),
+			relocatable: true,
+			unknownFlag: false,
+		},
+		{
 			desc:        "full chromium release build args",
 			args:        fullChromiumReleaseBuildArgs,
 			relocatable: true,
@@ -204,6 +210,18 @@ func TestClangclRelocatableReq(t *testing.T) {
 			desc:        "full llvm release build args",
 			args:        fullLLVMReleaseBuildArgs,
 			relocatable: false,
+		},
+		{
+			desc: "-mllvm -instcombine-lower-dbg-declare=0",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-mllvm", "-instcombine-lower-dbg-declare=0"),
+			relocatable: true,
+		},
+		{
+			desc: "-mllvm -basic-aa-recphi=0",
+			args: append(append([]string{}, baseReleaseArgs...),
+				"-mllvm", "-basic-aa-recphi=0"),
+			relocatable: true,
 		},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {

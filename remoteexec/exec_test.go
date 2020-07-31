@@ -219,6 +219,8 @@ func (f *fakeGomaInput) upload(ctx context.Context, blobs []*gomapb.FileBlob) ([
 	return hashes, nil
 }
 
+func (f *fakeGomaInput) Close() {}
+
 func makeInput(tb testing.TB, content, filename string) *gomapb.ExecReq_Input {
 	tb.Helper()
 	blob := &gomapb.FileBlob{

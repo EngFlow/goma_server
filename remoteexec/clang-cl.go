@@ -153,6 +153,8 @@ Loop:
 			subArgs["cpp"] = append(subArgs["cpp"], strings.Split(arg[len("-Wp,"):], ",")...)
 		case arg == "-Xclang":
 			subCmd = "clang"
+		case arg == "-mllvm":
+			subCmd = "llvm"
 
 		case strings.HasPrefix(arg, "-w"): // inhibit all warnings
 		case strings.HasPrefix(arg, "-W"): // warning
@@ -208,6 +210,7 @@ Loop:
 		case arg == "/Gw", arg == "/Gw-": // Optimize global data
 		case arg == "/GF": // Enables string pooling
 		case arg == "/c": // Compile without linking
+		case arg == "/showIncludes": // List include files
 		case strings.HasPrefix(arg, "/D"): // Preprocessor
 		case strings.HasPrefix(arg, "/EH"): // Specify error handling
 		case strings.HasPrefix(arg, "/Zc:"): // Specify compiler behavior
@@ -235,6 +238,11 @@ Loop:
 			switch cmd {
 			case "clang":
 				err := clangclArgRelocatable(filepath, args)
+				if err != nil {
+					return err
+				}
+			case "llvm":
+				err := llvmArgRelocatable(filepath, args)
 				if err != nil {
 					return err
 				}

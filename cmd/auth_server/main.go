@@ -225,7 +225,7 @@ func main() {
 		checkToken = func(ctx context.Context, token *oauth2.Token, tokenInfo *auth.TokenInfo) (string, *oauth2.Token, error) {
 			account, token, err := a.CheckToken(ctx, token, tokenInfo)
 			if err != nil {
-				return "", nil, err
+				return account, nil, err
 			}
 			if rbeCheckToken != nil {
 				_, token, err = rbeCheckToken(ctx, token, tokenInfo)

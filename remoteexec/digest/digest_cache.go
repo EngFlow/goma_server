@@ -6,31 +6,67 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	rpb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
-
+	"github.com/golang/groupcache/lru"
 	"github.com/golang/protobuf/proto"
+	"go.opencensus.io/stats"
+	"go.opencensus.io/stats/view"
+	"go.opencensus.io/tag"
 
 	"go.chromium.org/goma/server/log"
 	cachepb "go.chromium.org/goma/server/proto/cache"
 )
 
+var (
+	cacheStats = stats.Int64(
+		"go.chromium.org/goma/server/remoteexec/digest.cache",
+		"digest cache operations",
+		stats.UnitDimensionless)
+
+	opKey      = tag.MustNewKey("op")
+	fileExtKey = tag.MustNewKey("file_ext")
+
+	DefaultViews = []*view.View{
+		{
+			Name:        "go.chromium.org/goma/server/remoteexec/digest.cache-entries",
+			Description: `number of digest cache entries`,
+			Measure:     cacheStats,
+			Aggregation: view.Sum(),
+		},
+		{
+			Name:        "go.chromium.org/goma/server/remoteexec/digest.cache-ops",
+			Description: `digest cache operations`,
+			Measure:     cacheStats,
+			TagKeys: []tag.Key{
+				opKey,
+				fileExtKey,
+			},
+			Aggregation: view.Count(),
+		},
+	}
+)
+
 // Cache caches file's digest data.
 type Cache struct {
-	c  cachepb.CacheServiceClient
-	mu sync.RWMutex
-	m  map[string]Data
+	c cachepb.CacheServiceClient
+
+	mu  sync.Mutex
+	lru lru.Cache
 }
 
 // NewCache creates new cache for digest data.
-func NewCache(c cachepb.CacheServiceClient) *Cache {
-	return &Cache{
+func NewCache(c cachepb.CacheServiceClient, maxEntries int) *Cache {
+	cache := &Cache{
 		c: c,
-		m: make(map[string]Data),
 	}
+	cache.lru.MaxEntries = maxEntries
+	cache.lru.OnEvicted = cache.onEvicted
+	return cache
 }
 
 var errNoCacheClient = errors.New("no cache client")
@@ -72,12 +108,25 @@ func (c *Cache) cacheSet(ctx context.Context, key string, d *rpb.Digest) error {
 
 // Get gets source's digest.
 func (c *Cache) Get(ctx context.Context, key string, src Source) (Data, error) {
+	var fileExt string
+	if gi, ok := src.(interface {
+		Filename() string
+	}); ok {
+		fileExt = filepathExt(gi.Filename())
+	}
+
 	if c != nil {
-		c.mu.RLock()
-		d, ok := c.m[key]
-		c.mu.RUnlock()
+		c.mu.Lock()
+		data, ok := c.lru.Get(lru.Key(key))
+		c.mu.Unlock()
 		if ok {
-			return d, nil
+			stats.RecordWithTags(ctx, []tag.Mutator{
+				tag.Upsert(opKey, "hit"),
+				tag.Upsert(fileExtKey, fileExt),
+			}, cacheStats.M(0))
+			// stochastically put it to cache client
+			// to make lru/lfu work?
+			return data.(Data), nil
 		}
 	}
 	var keystr string
@@ -95,12 +144,20 @@ func (c *Cache) Get(ctx context.Context, key string, src Source) (Data, error) {
 		d := New(src, dk)
 		if c != nil {
 			c.mu.Lock()
-			c.m[key] = d
+			c.lru.Add(lru.Key(key), d)
 			c.mu.Unlock()
+			stats.RecordWithTags(ctx, []tag.Mutator{
+				tag.Upsert(opKey, "cache-get"),
+				tag.Upsert(fileExtKey, fileExt),
+			}, cacheStats.M(1))
 		}
 		return d, nil
 	}
 	logger.Infof("digest cache miss %s %v: %s", keystr, err, time.Since(start))
+	stats.RecordWithTags(ctx, []tag.Mutator{
+		tag.Upsert(opKey, "miss"),
+		tag.Upsert(fileExtKey, fileExt),
+	}, cacheStats.M(0))
 	d, err := FromSource(ctx, src)
 	if err != nil {
 		logger.Warnf("digest from source %s %v: %s", keystr, err, time.Since(start))
@@ -108,13 +165,49 @@ func (c *Cache) Get(ctx context.Context, key string, src Source) (Data, error) {
 	}
 	if c != nil {
 		c.mu.Lock()
-		c.m[key] = d
+		c.lru.Add(lru.Key(key), d)
 		c.mu.Unlock()
 		logger.Infof("digest cache set %s => %v: %s", keystr, d, time.Since(start))
 		err = c.cacheSet(ctx, key, d.Digest())
 		if err != nil {
 			logger.Warnf("digest cache set fail %s => %v: %v: %s", keystr, d, err, time.Since(start))
 		}
+		stats.RecordWithTags(ctx, []tag.Mutator{
+			tag.Upsert(opKey, "cache-set"),
+			tag.Upsert(fileExtKey, fileExt),
+		}, cacheStats.M(1))
 	}
 	return d, nil
+}
+
+func (c *Cache) onEvicted(k lru.Key, value interface{}) {
+	ctx := context.Background()
+	logger := log.FromContext(ctx)
+	key := k.(string)
+	var filename, fileExt string
+	d := value.(Data)
+	if dd, ok := d.(data); ok {
+		src := dd.source
+		if gi, ok := src.(interface {
+			Filename() string
+		}); ok {
+			filename = gi.Filename()
+			fileExt = filepathExt(gi.Filename())
+		}
+	}
+	logger.Infof("digest cache evict %s %s %q", key, d.Digest(), filename)
+	stats.RecordWithTags(ctx, []tag.Mutator{
+		tag.Upsert(opKey, "evict"),
+		tag.Upsert(fileExtKey, fileExt),
+	}, cacheStats.M(-1))
+}
+
+func filepathExt(fname string) string {
+	ext := filepath.Ext(fname)
+	if strings.ContainsAny(ext, `/\`) {
+		// ext should not have path separtor.
+		// if it has, it would be in directory part.
+		ext = ""
+	}
+	return ext
 }

@@ -325,7 +325,7 @@ message ExecResp {
   enum BadRequestReasonCode {
     // The reason is unknown (or not BAD_REQUEST)
     UNKNOWN = 0;
-    // The request contains unsupported (e.g. blacklisted) compiler flags.
+    // The request contains unsupported compiler flags.
     UNSUPPORTED_COMPILER_FLAGS = 1;
   };
   enum CacheSource {

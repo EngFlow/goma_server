@@ -30,6 +30,15 @@ func (r *retrySpy) f() error {
 }
 
 func TestRetry(t *testing.T) {
+	origTimeAfter := timeAfter
+	timeAfter = func(d time.Duration) <-chan time.Time {
+		ch := make(chan time.Time)
+		close(ch)
+		return ch
+	}
+	defer func() {
+		timeAfter = origTimeAfter
+	}()
 	for _, tc := range []struct {
 		desc    string
 		retry   Retry
@@ -155,6 +164,25 @@ func TestRetry(t *testing.T) {
 				},
 			},
 			wantN: 3,
+		},
+		{
+			desc: "retry with RESOURCE_EXHAUSTED",
+			f: &retrySpy{
+				errs: []error{
+					status.Error(codes.ResourceExhausted, "resource exhausted"),
+					status.Error(codes.ResourceExhausted, "resource exhausted"),
+					status.Error(codes.ResourceExhausted, "resource exhausted"),
+					status.Error(codes.ResourceExhausted, "resource exhausted"),
+					status.Error(codes.ResourceExhausted, "resource exhausted"),
+					status.Error(codes.ResourceExhausted, "resource exhausted"),
+					status.Error(codes.ResourceExhausted, "resource exhausted"),
+					status.Error(codes.ResourceExhausted, "resource exhausted"),
+					status.Error(codes.ResourceExhausted, "resource exhausted"),
+					status.Error(codes.ResourceExhausted, "resource exhausted"),
+				},
+			},
+			wantN:   5,
+			wantErr: true,
 		},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {

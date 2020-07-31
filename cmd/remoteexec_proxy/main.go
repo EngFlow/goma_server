@@ -68,10 +68,13 @@ var (
 	platformContainerImage = flag.String("platform-container-image", "", "docker uri of platform container image")
 	insecureRemoteexec     = flag.Bool("insecure-remoteexec", false, "insecure grpc for remoteexec API")
 	insecureSkipVerify     = flag.Bool("insecure-skip-verify", false, "insecure skip verifying the server certificate")
+	execMaxRetryCount      = flag.Int("exec-max-retry-count", 5, "max retry count for exec call. 0 is unlimited count, but bound to ctx timtout. Use small number for powerful clients to run local fallback quickly. Use large number for powerless clients to use remote more than local.")
 
 	fileCacheBucket = flag.String("file-cache-bucket", "", "file cache bucking store bucket")
 
 	execConfigFile = flag.String("exec-config-file", "", "exec inventory config file")
+
+	maxDigestCacheEntries = flag.Int("max-digest-cache-entries", 2e6, "maximum entries in in-memory digest cache")
 
 	traceProjectID = flag.String("trace-project-id", "", "project id for cloud tracing")
 	traceFraction  = flag.Float64("trace-sampling-fraction", 1.0, "sampling fraction for stackdriver trace")
@@ -370,10 +373,10 @@ func main() {
 	redisAddr, err := redis.AddrFromEnv()
 	if err != nil {
 		logger.Warnf("redis disabled for gomafile-digest: %v", err)
-		digestCache = digest.NewCache(nil)
+		digestCache = digest.NewCache(nil, *maxDigestCacheEntries)
 	} else {
 		logger.Infof("redis enabled for gomafile-digest: %v", redisAddr)
-		digestCache = digest.NewCache(redis.NewClient(ctx, redisAddr, "gomafile-digest:"))
+		digestCache = digest.NewCache(redis.NewClient(ctx, redisAddr, "gomafile-digest:"), *maxDigestCacheEntries)
 	}
 
 	re := &remoteexec.Adapter{
@@ -381,6 +384,9 @@ func main() {
 		ExecTimeout:    15 * time.Minute,
 		Client: remoteexec.Client{
 			ClientConn: reConn,
+			Retry: rpc.Retry{
+				MaxRetry: *execMaxRetryCount,
+			},
 		},
 		InsecureClient: *insecureRemoteexec,
 		GomaFile:       fileServiceClient,

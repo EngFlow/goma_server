@@ -53,6 +53,7 @@ type request struct {
 
 	digestStore *digest.Store
 	tree        *merkletree.MerkleTree
+	input       gomaInputInterface
 
 	filepath clientFilePath
 
@@ -68,6 +69,10 @@ type request struct {
 	needChroot  bool
 
 	err error
+}
+
+func (r *request) Close() {
+	r.input.Close()
 }
 
 type clientFilePath interface {
@@ -133,6 +138,9 @@ func createEnvVars(ctx context.Context, envs []string) []*rpb.Command_Environmen
 
 // ID returns compiler proxy id of the request.
 func (r *request) ID() string {
+	if r == nil {
+		return "<unknown>"
+	}
 	return r.gomaReq.GetRequesterInfo().GetCompilerProxyId()
 }
 
@@ -245,6 +253,7 @@ func changeSymlinkAbsToRel(e merkletree.Entry) (merkletree.Entry, error) {
 type gomaInputInterface interface {
 	toDigest(context.Context, *gomapb.ExecReq_Input) (digest.Data, error)
 	upload(context.Context, []*gomapb.FileBlob) ([]string, error)
+	Close()
 }
 
 func uploadInputFiles(ctx context.Context, inputs []*gomapb.ExecReq_Input, gi gomaInputInterface, sema chan struct{}) error {
@@ -462,11 +471,7 @@ func (r *request) newInputTree(ctx context.Context) *gomapb.ExecResp {
 	cleanCWD := r.filepath.Clean(r.gomaReq.GetCwd())
 	cleanRootDir := r.filepath.Clean(r.tree.RootDir())
 
-	gi := gomaInput{
-		gomaFile:    r.f.GomaFile,
-		digestCache: r.f.DigestCache,
-	}
-	results := inputFiles(ctx, r.gomaReq.Input, gi, func(filename string) (string, error) {
+	results := inputFiles(ctx, r.gomaReq.Input, r.input, func(filename string) (string, error) {
 		return rootRel(r.filepath, filename, cleanCWD, cleanRootDir)
 	}, executableInputs, r.f.FileLookupSema)
 	for _, result := range results {
@@ -484,7 +489,7 @@ func (r *request) newInputTree(ctx context.Context) *gomapb.ExecResp {
 		}
 	}
 
-	err = uploadInputFiles(ctx, uploads, gi, r.f.FileLookupSema)
+	err = uploadInputFiles(ctx, uploads, r.input, r.f.FileLookupSema)
 	if err != nil {
 		r.err = err
 		return nil
@@ -509,6 +514,7 @@ func (r *request) newInputTree(ctx context.Context) *gomapb.ExecResp {
 	if len(missingInputs) > 0 {
 		r.gomaResp.MissingInput = missingInputs
 		r.gomaResp.MissingReason = missingReason
+		thinOutMissing(r.gomaResp, missingInputLimit)
 		sortMissing(r.gomaReq.Input, r.gomaResp)
 		logFileList(logger, "missing inputs", r.gomaResp.MissingInput)
 		return r.gomaResp
@@ -1092,6 +1098,21 @@ func sortMissing(inputs []*gomapb.ExecReq_Input, resp *gomapb.ExecResp) {
 	})
 }
 
+// The server does not report more than this size as missing inputs to avoid DoS from Goma client.
+const missingInputLimit = 100
+
+// thinOutMissing thins out missint inputs if it is more than limit.
+// Note: sortMissing should be called after this to preserve the file name order.
+func thinOutMissing(resp *gomapb.ExecResp, limit int) {
+	if len(resp.MissingInput) < limit { // no need to thin out.
+		return
+	}
+	rand.Shuffle(len(resp.MissingInput), func(i, j int) {
+		resp.MissingInput[i], resp.MissingInput[j] = resp.MissingInput[j], resp.MissingInput[i]
+	})
+	resp.MissingInput = resp.MissingInput[:limit]
+}
+
 func logFileList(logger log.Logger, msg string, files []string) {
 	s := fmt.Sprintf("%q", files)
 	const logLineThreshold = 95 * 1024
@@ -1109,7 +1130,7 @@ func logFileList(logger log.Logger, msg string, files []string) {
 		s, files = files[0], files[1:]
 		fmt.Fprintf(&b, "%q", s)
 		if b.Len() > logLineThreshold {
-			logger.Infof("%s %d: [%s]", msg, i, b)
+			logger.Infof("%s %d: [%s]", msg, i, b.String())
 			i++
 			b.Reset()
 		}
@@ -1142,6 +1163,7 @@ func (r *request) uploadBlobs(ctx context.Context, blobs []*rpb.Digest) (*gomapb
 			if len(missingInputs) > 0 {
 				r.gomaResp.MissingInput = missingInputs
 				r.gomaResp.MissingReason = missingReason
+				thinOutMissing(r.gomaResp, missingInputLimit)
 				sortMissing(r.gomaReq.Input, r.gomaResp)
 				logFileList(logger, "missing inputs", r.gomaResp.MissingInput)
 				return r.gomaResp, nil
@@ -1217,15 +1239,36 @@ func (r *request) newResp(ctx context.Context, eresp *rpb.ExecuteResponse, cache
 		return r.gomaResp, nil
 	}
 	md := eresp.Result.GetExecutionMetadata()
-	logger.Infof("exit=%d cache=%s : exec on %q queue=%s worker=%s input=%s exec=%s output=%s",
+	queueTime := timestampSub(ctx, md.GetWorkerStartTimestamp(), md.GetQueuedTimestamp())
+	workerTime := timestampSub(ctx, md.GetWorkerCompletedTimestamp(), md.GetWorkerStartTimestamp())
+	inputTime := timestampSub(ctx, md.GetInputFetchCompletedTimestamp(), md.GetInputFetchStartTimestamp())
+	execTime := timestampSub(ctx, md.GetExecutionCompletedTimestamp(), md.GetExecutionStartTimestamp())
+	outputTime := timestampSub(ctx, md.GetOutputUploadCompletedTimestamp(), md.GetOutputUploadStartTimestamp())
+	osFamily := platformOSFamily(r.platform)
+	dockerRuntime := platformDockerRuntime(r.platform)
+	logger.Infof("exit=%d cache=%s : exec on %q[%s, %s] queue=%s worker=%s input=%s exec=%s output=%s",
 		eresp.Result.GetExitCode(),
 		r.gomaResp.GetCacheHit(),
 		md.GetWorker(),
-		timestampSub(ctx, md.GetWorkerStartTimestamp(), md.GetQueuedTimestamp()),
-		timestampSub(ctx, md.GetWorkerCompletedTimestamp(), md.GetWorkerStartTimestamp()),
-		timestampSub(ctx, md.GetInputFetchCompletedTimestamp(), md.GetInputFetchStartTimestamp()),
-		timestampSub(ctx, md.GetExecutionCompletedTimestamp(), md.GetExecutionStartTimestamp()),
-		timestampSub(ctx, md.GetOutputUploadCompletedTimestamp(), md.GetOutputUploadStartTimestamp()))
+		osFamily,
+		dockerRuntime,
+		queueTime,
+		workerTime,
+		inputTime,
+		execTime,
+		outputTime)
+	tags := []tag.Mutator{
+		tag.Upsert(rbeExitKey, fmt.Sprintf("%d", eresp.Result.GetExitCode())),
+		tag.Upsert(rbeCacheKey, r.gomaResp.GetCacheHit().String()),
+		tag.Upsert(rbePlatformOSFamilyKey, osFamily),
+		tag.Upsert(rbePlatformDockerRuntimeKey, dockerRuntime),
+	}
+	stats.RecordWithTags(ctx, tags, rbeQueueTime.M(float64(queueTime.Nanoseconds())/1e6))
+	stats.RecordWithTags(ctx, tags, rbeWorkerTime.M(float64(workerTime.Nanoseconds())/1e6))
+	stats.RecordWithTags(ctx, tags, rbeInputTime.M(float64(inputTime.Nanoseconds())/1e6))
+	stats.RecordWithTags(ctx, tags, rbeExecTime.M(float64(execTime.Nanoseconds())/1e6))
+	stats.RecordWithTags(ctx, tags, rbeOutputTime.M(float64(outputTime.Nanoseconds())/1e6))
+
 	r.gomaResp.ExecutionStats = &gomapb.ExecutionStats{
 		ExecutionStartTimestamp:     md.GetExecutionStartTimestamp(),
 		ExecutionCompletedTimestamp: md.GetExecutionCompletedTimestamp(),
@@ -1309,6 +1352,29 @@ func (r *request) newResp(ctx context.Context, eresp *rpb.ExecuteResponse, cache
 	}
 
 	return r.gomaResp, r.Err()
+}
+
+func platformOSFamily(p *rpb.Platform) string {
+	for _, p := range p.Properties {
+		if p.Name == "OSFamily" {
+			return p.Value
+		}
+	}
+	return "unspecified"
+}
+
+func platformDockerRuntime(p *rpb.Platform) string {
+	for _, p := range p.Properties {
+		switch p.Name {
+		case "dockerRuntime":
+			return p.Value
+		case "dockerPrivileged":
+			if p.Value == "true" {
+				return "nsjail"
+			}
+		}
+	}
+	return "default"
 }
 
 func shortLogMsg(msg []byte) string {

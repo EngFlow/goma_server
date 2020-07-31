@@ -35,6 +35,7 @@ import (
 type Client struct {
 	*grpc.ClientConn
 	CallOptions []grpc.CallOption
+	Retry       rpc.Retry
 }
 
 func (c Client) callOptions(opts ...grpc.CallOption) []grpc.CallOption {
@@ -159,7 +160,7 @@ func ExecuteAndWait(ctx context.Context, c Client, req *rpb.ExecuteRequest, opts
 		Recv() (*lpb.Operation, error)
 	}
 	pctx := ctx
-	err := rpc.Retry{}.Do(ctx, func() error {
+	err := c.Retry.Do(ctx, func() error {
 		ctx, cancel := context.WithTimeout(pctx, 1*time.Minute)
 		defer cancel()
 		var stream responseStream
@@ -238,7 +239,11 @@ func erespErr(ctx context.Context, eresp *rpb.ExecuteResponse) error {
 	// Other error would be non retriable.
 	switch codes.Code(st.GetCode()) {
 	case codes.OK:
-	case codes.FailedPrecondition, codes.ResourceExhausted, codes.Internal:
+	case codes.ResourceExhausted:
+		logger.Warnf("execute response: status=%s", st)
+		return status.FromProto(st).Err()
+
+	case codes.FailedPrecondition, codes.Internal:
 		logger.Warnf("execute response: status=%s", st)
 		fallthrough
 	case codes.Unavailable:

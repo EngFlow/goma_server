@@ -10,13 +10,18 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"sync"
+	"time"
 
+	"go.opencensus.io/stats"
+	"go.opencensus.io/tag"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"go.chromium.org/goma/server/file"
 	"go.chromium.org/goma/server/hash"
+	"go.chromium.org/goma/server/log"
 	gomapb "go.chromium.org/goma/server/proto/api"
 	fpb "go.chromium.org/goma/server/proto/file"
 	"go.chromium.org/goma/server/remoteexec/digest"
@@ -35,14 +40,26 @@ type gomaInput struct {
 
 	// key: goma file hash -> value: digest.Data
 	digestCache DigestCache
+
+	mu   sync.Mutex
+	srcs []*gomaInputSource
+}
+
+func (gi *gomaInput) Close() {
+	gi.mu.Lock()
+	defer gi.mu.Unlock()
+	for _, src := range gi.srcs {
+		src.resetBlob()
+	}
 }
 
 // gomaInput converts goma input file to remoteexec digest.
-func (gi gomaInput) toDigest(ctx context.Context, input *gomapb.ExecReq_Input) (digest.Data, error) {
+func (gi *gomaInput) toDigest(ctx context.Context, input *gomapb.ExecReq_Input) (digest.Data, error) {
 	hashKey := input.GetHashKey()
 	// TODO: if input has size bytes, use it as digest.
 	// if it has inlined content, put it in digest.Data.
 
+	// client usually sets hashKey, but compute hashKey if not set.
 	if hashKey == "" && input.GetContent() != nil {
 		var err error
 		hashKey, err = hash.SHA256Proto(input.GetContent())
@@ -50,15 +67,20 @@ func (gi gomaInput) toDigest(ctx context.Context, input *gomapb.ExecReq_Input) (
 			return nil, err
 		}
 	}
-	src := gomaInputSource{
+	src := &gomaInputSource{
 		lookupClient: gi.gomaFile,
 		hashKey:      hashKey,
+		filename:     input.GetFilename(),
 		blob:         input.GetContent(),
 	}
+	gi.mu.Lock()
+	gi.srcs = append(gi.srcs, src)
+	gi.mu.Unlock()
+
 	return gi.digestCache.Get(ctx, hashKey, src)
 }
 
-func (gi gomaInput) upload(ctx context.Context, content []*gomapb.FileBlob) ([]string, error) {
+func (gi *gomaInput) upload(ctx context.Context, content []*gomapb.FileBlob) ([]string, error) {
 	if len(content) == 0 {
 		return nil, status.Error(codes.FailedPrecondition, "upload: contents must not be empty.")
 	}
@@ -122,23 +144,47 @@ func lookup(ctx context.Context, c lookupClient, hashKeys []string) ([]*gomapb.F
 type gomaInputSource struct {
 	lookupClient lookupClient
 	hashKey      string
-	blob         *gomapb.FileBlob
+	filename     string
+
+	mu   sync.Mutex
+	blob *gomapb.FileBlob
 }
 
-func (g gomaInputSource) String() string {
-	return fmt.Sprintf("goma-input:%s %p", g.hashKey, g.blob)
-}
-
-func (g gomaInputSource) Open(ctx context.Context) (io.ReadCloser, error) {
+func (g *gomaInputSource) String() string {
+	g.mu.Lock()
 	blob := g.blob
-	// TODO: release g.blob
+	g.mu.Unlock()
+	return fmt.Sprintf("goma-input:%s %s %p", g.hashKey, g.filename, blob)
+}
+
+func (g *gomaInputSource) Filename() string {
+	return g.filename
+}
+
+func (g *gomaInputSource) getBlob(ctx context.Context) (*gomapb.FileBlob, error) {
+	g.mu.Lock()
+	blob := g.blob
+	g.mu.Unlock()
 	if blob == nil {
-		var err error
 		blobs, err := lookup(ctx, g.lookupClient, []string{g.hashKey})
 		if err != nil {
 			return nil, err
 		}
 		blob = blobs[0]
+	}
+	return blob, nil
+}
+
+func (g *gomaInputSource) resetBlob() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.blob = nil
+}
+
+func (g *gomaInputSource) Open(ctx context.Context) (io.ReadCloser, error) {
+	blob, err := g.getBlob(ctx)
+	if err != nil {
+		return nil, err
 	}
 	switch blob.GetBlobType() {
 	case gomapb.FileBlob_FILE:
@@ -151,7 +197,6 @@ func (g gomaInputSource) Open(ctx context.Context) (io.ReadCloser, error) {
 			lookupClient: g.lookupClient,
 			hashKey:      g.hashKey,
 			meta:         blob,
-			allocated:    make([]byte, gomaInputBatchSize*file.FileChunkSize),
 		}, nil
 
 	case gomapb.FileBlob_FILE_UNSPECIFIED:
@@ -161,6 +206,46 @@ func (g gomaInputSource) Open(ctx context.Context) (io.ReadCloser, error) {
 }
 
 const gomaInputBatchSize = 5
+
+// one allocation at most 10MiB (5 * 2MB)
+// limit at most 1GB (5 * 2MiB * 100) for input buffers.
+const maxConcurrentInputBuffers = 100
+
+type gomaInputBufferPool struct {
+	sema chan bool
+	// use sync.Pool?
+}
+
+var inputBufferPool = &gomaInputBufferPool{
+	sema: make(chan bool, maxConcurrentInputBuffers),
+}
+
+func (p *gomaInputBufferPool) allocate(ctx context.Context, size int64) ([]byte, error) {
+	if size > gomaInputBatchSize*file.FileChunkSize {
+		size = gomaInputBatchSize * file.FileChunkSize
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	start := time.Now()
+	select {
+	case <-ctx.Done():
+		logger := log.FromContext(ctx)
+		logger.Errorf("goma input allocate buffer timed-out size=%d, %s", size, time.Since(start))
+		stats.RecordWithTags(ctx, []tag.Mutator{
+			tag.Upsert(allocStatusKey, "fail"),
+		}, inputBufferAllocSize.M(size))
+		return nil, ctx.Err()
+	case p.sema <- true:
+		stats.RecordWithTags(ctx, []tag.Mutator{
+			tag.Upsert(allocStatusKey, "ok"),
+		}, inputBufferAllocSize.M(size))
+		return make([]byte, size), nil
+	}
+}
+
+func (p *gomaInputBufferPool) release(buf []byte) {
+	<-p.sema
+}
 
 type gomaInputReader struct {
 	ctx          context.Context
@@ -175,6 +260,10 @@ type gomaInputReader struct {
 func (r *gomaInputReader) Read(buf []byte) (int, error) {
 	if len(r.buf) == 0 {
 		if len(r.meta.HashKey) == r.i {
+			// release buffer once all contents has been processed.
+			inputBufferPool.release(r.allocated)
+			r.buf = nil
+			r.allocated = nil
 			return 0, io.EOF
 		}
 		j := r.i + gomaInputBatchSize
@@ -188,6 +277,12 @@ func (r *gomaInputReader) Read(buf []byte) (int, error) {
 		for i, blob := range blobs {
 			if blob.GetBlobType() != gomapb.FileBlob_FILE_CHUNK {
 				return 0, status.Errorf(codes.Internal, "lookup chunk in FILE_META %s %d %s: not FILE_CHUNK %v", r.hashKey, r.i+i, r.meta.HashKey[r.i+i], blob.GetBlobType())
+			}
+		}
+		if len(r.allocated) == 0 {
+			r.allocated, err = inputBufferPool.allocate(r.ctx, r.meta.GetFileSize())
+			if err != nil {
+				return 0, status.Errorf(codes.ResourceExhausted, "allocate buffer for FILE_META %s size=%d: %v", r.hashKey, r.meta.GetFileSize(), err)
 			}
 		}
 		b := r.allocated
@@ -209,5 +304,11 @@ func (r *gomaInputReader) Read(buf []byte) (int, error) {
 }
 
 func (r *gomaInputReader) Close() error {
+	// release buffer if it has not yet been released.
+	if len(r.allocated) > 0 {
+		inputBufferPool.release(r.allocated)
+		r.buf = nil
+		r.allocated = nil
+	}
 	return nil
 }

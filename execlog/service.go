@@ -11,9 +11,9 @@ import (
 )
 
 // DefaultMaxReqMsgSize is max request message size for execlog service.
-// execlog server may recives > 6MB.
+// execlog server may receives > 8MB.
 // grpc's default is 4MB.
-const DefaultMaxReqMsgSize = 8 * 1024 * 1024
+const DefaultMaxReqMsgSize = 10 * 1024 * 1024
 
 // Service represents goma execlog service.
 type Service struct {

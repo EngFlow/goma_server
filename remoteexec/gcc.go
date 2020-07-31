@@ -18,7 +18,10 @@ var pathFlags = []string{
 	"-fprofile-instr-use=",
 	"-fprofile-sample-use=",
 	"-fsanitize-blacklist=",
+	"--include=",
+	"--include",
 	"-include=",
+	"-include",
 	"-isystem",
 	"-o",
 	"-resource-dir=",
@@ -157,6 +160,7 @@ Loop:
 		case arg == "-integrated-as":
 		case arg == "-pedantic":
 		case arg == "-pipe":
+		case arg == "-pie":
 		case arg == "-pthread":
 		case arg == "-c":
 		case strings.HasPrefix(arg, "-std"):
@@ -173,6 +177,8 @@ Loop:
 		case arg == "-MF":
 			pathFlag = true
 		case arg == "-isysroot":
+			pathFlag = true
+		case arg == "-idirafter":
 			pathFlag = true
 
 		case strings.HasPrefix(arg, "-"): // unknown flag?
@@ -242,6 +248,7 @@ func clangArgRelocatable(filepath clientFilePath, args []string) error {
 			skipFlag = true
 		case arg == "-load":
 			pathFlag = true
+		case strings.HasPrefix(arg, "-debug-info-kind="):
 		default:
 			return fmt.Errorf("clang unknown arg: %s", arg)
 		}
@@ -269,6 +276,20 @@ func llvmArgRelocatable(filepath clientFilePath, args []string) error {
 			// https://b/issues/141210713#comment4
 			// -mllvm -pbqp-coalescing
 			// https://github.com/llvm-mirror/llvm/blob/114087caa6f95b526861c3af94b3093d9444c57b/lib/CodeGen/RegAllocPBQP.cpp
+
+		case strings.HasPrefix(arg, "-instcombine-"):
+			// https://b/issues/161304121
+			// -mllvm -instcombine-lower-dbg-declare=0
+			// -instcombine-* defined in
+			// https://github.com/llvm/llvm-project/blob/8e9a505139fbef7d2e6e9d0adfe1efc87326f9ef/llvm/lib/Transforms/InstCombine/InstructionCombining.cpp
+
+		case strings.HasPrefix(arg, "-basic-aa"):
+			// -mllvm -basic-aa-recphi=0
+			// https://github.com/llvm/llvm-project/blob/694ded37b9d70e385addfc482d298b054073ebe1/llvm/lib/Analysis/BasicAliasAnalysis.cpp
+
+		case strings.HasPrefix(arg, "-sanitizer-coverage-"):
+			// -mllvm -sanitizer-coverage-prune-blocks=1
+			// https://github.com/llvm/llvm-project/blob/93ec6cd684265161623b4ea67836f022cd18c224/llvm/lib/Transforms/Instrumentation/SanitizerCoverage.cpp
 
 		default:
 			return fmt.Errorf("llvm unknown arg: %s", arg)

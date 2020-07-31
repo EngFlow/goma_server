@@ -33,6 +33,9 @@ type Retry struct {
 	MaxRetry  int
 	BaseDelay time.Duration
 	MaxDelay  time.Duration
+
+	// backoff factor. default is 1.6
+	Factor float64
 }
 
 func (r Retry) retry() int {
@@ -56,7 +59,13 @@ func (r Retry) maxDelay() time.Duration {
 	return r.MaxDelay
 }
 
-func (r Retry) factor() float64 { return 1.6 }
+func (r Retry) factor() float64 {
+	if r.Factor == 0 {
+		return 1.6
+	}
+	return r.Factor
+}
+
 func (r Retry) jitter() float64 { return 0.2 }
 
 func (r Retry) backoff(n int) time.Duration {
@@ -80,8 +89,10 @@ func (r Retry) backoff(n int) time.Duration {
 
 // RetriableError represents retriable error in Retry.Do.
 type RetriableError struct {
-	Err   error
-	Delay time.Duration
+	Err    error
+	Max    int
+	Delay  time.Duration
+	Factor float64
 }
 
 func (e RetriableError) Error() string {
@@ -112,8 +123,17 @@ func retryInfo(ctx context.Context, err error) error {
 	if !ok {
 		return nil
 	}
+	var retryMax int
+	var retryDelay time.Duration
+	var retryFactor float64
 	switch st.Code() {
-	case codes.Unavailable, codes.ResourceExhausted:
+	case codes.ResourceExhausted:
+		// start slowly and backing off more quickly.
+		retryMax = 5
+		retryDelay = 1 * time.Second
+		retryFactor = 2.0
+
+	case codes.Unavailable:
 
 	case codes.DeadlineExceeded:
 		if ctx.Err() == nil {
@@ -163,16 +183,22 @@ func retryInfo(ctx context.Context, err error) error {
 			dur := ri.GetRetryDelay()
 			d, err := ptypes.Duration(dur)
 			return RetriableError{
-				Err:   err,
-				Delay: d,
+				Err:    err,
+				Max:    retryMax,
+				Delay:  d,
+				Factor: retryFactor,
 			}
 		}
 	}
 	return RetriableError{
-		Err:   errors.New("no errdetails.RetryInfo in status"),
-		Delay: 0,
+		Err:    errors.New("no errdetails.RetryInfo in status"),
+		Max:    retryMax,
+		Delay:  retryDelay,
+		Factor: retryFactor,
 	}
 }
+
+var timeAfter = time.After
 
 // Do calls f with retry, while f returns RetriableError, codes.Unavailable or
 // codes.ResourceExhausted.
@@ -226,9 +252,17 @@ func (r Retry) Do(ctx context.Context, f func() error) error {
 		if rerr.Err != nil {
 			span.Annotatef(nil, "retryInfo.err: %v", rerr.Err)
 		}
+		if (r.MaxRetry <= 0 && rerr.Max != r.MaxRetry) || (rerr.Max > 0 && rerr.Max < r.MaxRetry) {
+			r.MaxRetry = rerr.Max
+			span.Annotatef(nil, "retryInfo.delay=%s", rerr.Delay)
+		}
 		if rerr.Delay > r.BaseDelay {
 			r.BaseDelay = rerr.Delay
 			span.Annotatef(nil, "retryInfo.delay=%s", rerr.Delay)
+		}
+		if rerr.Factor != 0 {
+			r.Factor = rerr.Factor
+			span.Annotatef(nil, "retryInfo.factor=%v", rerr.Factor)
 		}
 
 		delay := r.backoff(i)
@@ -236,11 +270,11 @@ func (r Retry) Do(ctx context.Context, f func() error) error {
 			trace.Int64Attribute("retry", int64(i)),
 			trace.Int64Attribute("backoff_msec", delay.Nanoseconds()/1e6),
 		}, "retry backoff %s for err:%v", delay, err)
-		logger.Warnf("retry %d backoff %s for err:%v", i, delay, err)
+		logger.Warnf("retry %d backoff %s for err:%v retryInfo=%#v", i, delay, err, r)
 		select {
 		case <-ctx.Done():
 			return grpc.Errorf(codes.DeadlineExceeded, "%v: %v: %v", ctx.Err(), d, errs)
-		case <-time.After(delay):
+		case <-timeAfter(delay):
 			d = append(d, delay)
 		}
 	}

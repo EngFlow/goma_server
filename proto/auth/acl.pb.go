@@ -51,7 +51,6 @@ type Group struct {
 	// If service_account is empty, pass EUC as is.
 	ServiceAccount string `protobuf:"bytes,6,opt,name=service_account,json=serviceAccount,proto3" json:"service_account,omitempty"`
 	// If reject is true, deny access from this group.
-	// Used for blacklisting.
 	Reject bool `protobuf:"varint,7,opt,name=reject,proto3" json:"reject,omitempty"`
 }
 

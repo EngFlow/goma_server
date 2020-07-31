@@ -351,7 +351,7 @@ type ExecResp_BadRequestReasonCode int32
 const (
 	// The reason is unknown (or not BAD_REQUEST)
 	ExecResp_UNKNOWN ExecResp_BadRequestReasonCode = 0
-	// The request contains unsupported (e.g. blacklisted) compiler flags.
+	// The request contains unsupported compiler flags.
 	ExecResp_UNSUPPORTED_COMPILER_FLAGS ExecResp_BadRequestReasonCode = 1
 )
 

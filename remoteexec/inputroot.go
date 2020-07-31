@@ -14,13 +14,20 @@ import (
 	gomapb "go.chromium.org/goma/server/proto/api"
 )
 
-func samePathElement(a, b []string) []string {
+func samePathElement(filepath clientFilePath, a, b []string) []string {
 	for i, p := range a {
 		if i >= len(b) {
 			return a[:i]
 		}
-		if p != b[i] {
-			return a[:i]
+		switch filepath.(type) {
+		case winpath.FilePath:
+			if strings.ToLower(p) != strings.ToLower(b[i]) {
+				return a[:i]
+			}
+		default:
+			if p != b[i] {
+				return a[:i]
+			}
 		}
 	}
 	return a
@@ -32,7 +39,7 @@ func commonDir(filepath clientFilePath, paths []string) string {
 	}
 	path := filepath.SplitElem(paths[0])
 	for _, p := range paths[1:] {
-		path = samePathElement(path, filepath.SplitElem(p))
+		path = samePathElement(filepath, path, filepath.SplitElem(p))
 	}
 	return filepath.Join(path...)
 }
@@ -85,8 +92,11 @@ func validCommonDir(filepath clientFilePath, dir string) bool {
 			return false
 		}
 	case winpath.FilePath:
-		// TODO: check for win path.
-		return true
+		// The drive should be considered as root on Win.
+		// e.g. c:\ will return false.
+		if len(dir) == 3 && dir[1:] == `:\` {
+			return false
+		}
 
 	default:
 		// unknown filepath?
@@ -193,10 +203,9 @@ func rootRel(filepath clientFilePath, fname, cwd, rootDir string) (string, error
 	if len(fileElems) < len(rootElems) {
 		return "", errOutOfRoot
 	}
-	for i, elem := range rootElems {
-		if fileElems[i] != elem {
-			return "", errOutOfRoot
-		}
+	commonElems := samePathElement(filepath, rootElems, fileElems)
+	if len(commonElems) != len(rootElems) {
+		return "", errOutOfRoot
 	}
 	fileElems = fileElems[len(rootElems):]
 	relname := filepath.Join(fileElems...)

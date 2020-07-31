@@ -5,16 +5,17 @@
 package remoteexec
 
 import (
-	"reflect"
 	"testing"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/google/go-cmp/cmp"
 
 	"go.chromium.org/goma/server/command/descriptor/posixpath"
+	"go.chromium.org/goma/server/command/descriptor/winpath"
 	gomapb "go.chromium.org/goma/server/proto/api"
 )
 
-func TestGetPathsWithNoCommonDir(t *testing.T) {
+func TestGetPathsWithNoCommonDirPosix(t *testing.T) {
 	for _, tc := range []struct {
 		desc  string
 		paths []string
@@ -82,8 +83,73 @@ func TestGetPathsWithNoCommonDir(t *testing.T) {
 		},
 	} {
 		got := getPathsWithNoCommonDir(posixpath.FilePath{}, tc.paths)
-		if !reflect.DeepEqual(got, tc.want) {
-			t.Errorf("test case %s: getPathsWithNoCommonDir(paths=%v)=%v; want %v", tc.desc, tc.paths, got, tc.want)
+		if !cmp.Equal(got, tc.want) {
+			t.Errorf("test case %s: getPathsWithNoCommonDirPosix(paths=%v)=%v; want %v", tc.desc, tc.paths, got, tc.want)
+		}
+	}
+}
+
+func TestGetPathsWithNoCommonDirWin(t *testing.T) {
+	for _, tc := range []struct {
+		desc  string
+		paths []string
+		want  []string
+	}{
+		{
+			desc: `empty`,
+			// paths: nil,
+			// want:  nil,
+		},
+		{
+			desc:  `single`,
+			paths: []string{`/foo`},
+			// want:  nil,
+		},
+		{
+			desc: `has common dir`,
+			paths: []string{
+				`c:\foo\bar1`,
+				`c:\foo\local\bar2`,
+				`c:\foo\bar3`,
+			},
+			// want: nil,
+		},
+		{
+			desc: `has common dir with differnt pathsep`,
+			paths: []string{
+				`c:/foo/bar1`,
+				`c:\foo\local/bar2`,
+				`c:\foo\bar3`,
+			},
+			// want: nil,
+		},
+		{
+			desc: `has common dir with different case`,
+			paths: []string{
+				`C:\FOO\BAR1`,
+				`C:\Foo\Local\Bar2`,
+				`c:\foo\bar3`,
+			},
+			// want: nil,
+		},
+		{
+			desc: `no common dir`,
+			paths: []string{
+				`c:\foo`,
+				`c:\goo\local\baz`,
+				`c:\goo\`,
+				`c:\foo\local\bar2`,
+				`c:\foo\bar3`,
+			},
+			want: []string{
+				`c:\foo`,
+				`c:\goo\local\baz`,
+			},
+		},
+	} {
+		got := getPathsWithNoCommonDir(winpath.FilePath{}, tc.paths)
+		if !cmp.Equal(got, tc.want) {
+			t.Errorf(`test case %s: getPathsWithNoCommonDirWin(paths=%v)=%v; want %v`, tc.desc, tc.paths, got, tc.want)
 		}
 	}
 }
@@ -291,7 +357,7 @@ func TestInputRootDir(t *testing.T) {
 	}
 }
 
-func TestRootRel(t *testing.T) {
+func TestRootRelPosix(t *testing.T) {
 	for _, tc := range []struct {
 		fname, cwd, rootDir string
 		want                string
@@ -362,6 +428,51 @@ func TestRootRel(t *testing.T) {
 		}
 		if err != nil || got != tc.want {
 			t.Errorf("rootRel(posixpath.FilePath, %q, %q, %q)=%q, %v; want %q, nil", tc.fname, tc.cwd, tc.rootDir, got, err, tc.want)
+		}
+	}
+}
+
+func TestRootRelWin(t *testing.T) {
+	for _, tc := range []struct {
+		fname, cwd, rootDir string
+		want                string
+		wantErr             bool
+	}{
+		{
+			fname:   `..\..\base\foo.cc`,
+			cwd:     `c:\Users\foo\src\chromium\src\out\Release`,
+			rootDir: `c:\Users\foo\src\chromium\src`,
+			want:    `out\Release\..\..\base\foo.cc`,
+		},
+		{ // should ignore case to get relative path but preserve original case.
+			fname:   `..\..\Base\Foo.cc`,
+			cwd:     `C:\Users\Foo\Src\Chromium\Src\Out\Release`,
+			rootDir: `c:\users\foo\src\chromium\src`,
+			want:    `Out\Release\..\..\Base\Foo.cc`,
+		},
+		{
+			fname:   `c:\Users\foo\src\chromium\src\third_party\depot_tools\win_toolchain\vs_files\hash\win_sdk\bin\..\..\VC\Tols\MSVC\14.x.x\include\limit.h`,
+			cwd:     `c:\Users\foo\src\chromium\src\out\Release`,
+			rootDir: `c:\Users\foo\src\chromium\src`,
+			want:    `third_party\depot_tools\win_toolchain\vs_files\hash\win_sdk\bin\..\..\VC\Tols\MSVC\14.x.x\include\limit.h`,
+		},
+		{
+			fname:   `..\..\..\base\out-of-root.h`,
+			cwd:     `c:\Users\foo\src\chromium\src\out\Release`,
+			rootDir: `c:\Users\foo\src\chromium\src`,
+			wantErr: true,
+		},
+	} {
+		var filepath winpath.FilePath
+		got, err := rootRel(filepath, tc.fname, filepath.Clean(tc.cwd), filepath.Clean(tc.rootDir))
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("rootRel(winpath.FilePath, %q, %q, %q)=%v, nil; want error", tc.fname, tc.cwd, tc.rootDir, got)
+			}
+			continue
+		}
+		if err != nil || got != tc.want {
+			t.Errorf("rootRel(winpath.FilePath, %q, %q, %q)=%q, %v; want %q, nil", tc.fname, tc.cwd, tc.rootDir, got, err, tc.want)
 		}
 	}
 }

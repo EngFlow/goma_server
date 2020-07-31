@@ -20,6 +20,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
+	"go.opencensus.io/stats"
 	"go.opencensus.io/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/oauth"
@@ -227,6 +228,10 @@ func (f *Adapter) newRequest(ctx context.Context, gomaReq *gomapb.ExecReq) *requ
 			},
 		},
 		digestStore: gs,
+		input: &gomaInput{
+			gomaFile:    f.GomaFile,
+			digestCache: f.DigestCache,
+		},
 		action: &rpb.Action{
 			Timeout:    ptypes.DurationProto(timeout),
 			DoNotCache: doNotCache(gomaReq),
@@ -234,6 +239,53 @@ func (f *Adapter) newRequest(ctx context.Context, gomaReq *gomapb.ExecReq) *requ
 	}
 	logger.Infof("%s: new request group:%q", r.ID(), userGroup)
 	return r
+}
+
+// Use this to collect all timestamps and then print on one line,
+// regardless of where this function returns.
+type execSpan struct {
+	t0         time.Time
+	req        *request
+	timestamps []string
+}
+
+var spanMeasures = map[string]*stats.Float64Measure{
+	"inventory":     execInventoryTime,
+	"input tree":    execInputTreeTime,
+	"setup":         execSetupTime,
+	"check cache":   execCheckCacheTime,
+	"check missing": execCheckMissingTime,
+	"upload blobs":  execUploadBlobsTime,
+	"execute":       execExecuteTime,
+	"response":      execResponseTime,
+}
+
+func (s *execSpan) Close(ctx context.Context) {
+	s.timestamps = append(s.timestamps, fmt.Sprintf("total: %s", time.Since(s.t0).Truncate(time.Millisecond)))
+	logger := log.FromContext(ctx)
+	logger.Infof("%s", strings.Join(s.timestamps, ", "))
+}
+
+func (s *execSpan) Do(ctx context.Context, desc string, d time.Duration, f func(ctx context.Context)) time.Duration {
+	t := time.Now()
+	if d != 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, d)
+		defer cancel()
+	}
+	f(ctx)
+	duration := time.Since(t)
+	if ctx.Err() != nil {
+		logger := log.FromContext(ctx)
+		logger.Errorf("exec %s %s: timed-out %s: %s: %v", s.req.ID(), desc, d, duration, ctx.Err())
+	}
+	s.timestamps = append(s.timestamps, fmt.Sprintf("%s: %s", desc, duration.Truncate(time.Millisecond)))
+
+	if m, ok := spanMeasures[desc]; ok {
+		stats.Record(ctx, m.M(float64(duration.Nanoseconds())/1e6))
+	}
+
+	return duration
 }
 
 // Exec handles goma Exec requests with remoteexec backend.
@@ -269,60 +321,58 @@ func (f *Adapter) Exec(ctx context.Context, req *gomapb.ExecReq) (resp *gomapb.E
 		}
 	}()
 
-	t0 := time.Now()
+	// Use this to collect all timestamps and then print on one line,
+	// regardless of where this function returns.
+	espan := &execSpan{t0: time.Now()}
+	defer espan.Close(ctx)
+
 	adjustExecReq(req)
 	ctx = f.outgoingContext(ctx, req.GetRequesterInfo())
 	f.ensureCapabilities(ctx)
 
 	r := f.newRequest(ctx, req)
+	defer r.Close()
+	espan.req = r
 
-	// Use this to collect all timestamps and then print on one line, regardless of where
-	// this function returns.
-	var timestamps []string
-	defer func() {
-		logger.Infof("%s", strings.Join(timestamps, ", "))
-	}()
-	addTimestamp := func(desc string, duration time.Duration) {
-		timestamps = append(timestamps, fmt.Sprintf("%s: %s", desc, duration.Truncate(time.Millisecond)))
-	}
-
-	t := time.Now()
-	resp = r.getInventoryData(ctx)
-	addTimestamp("inventory", time.Since(t))
+	dur := espan.Do(ctx, "inventory", 1*time.Second, func(ctx context.Context) {
+		resp = r.getInventoryData(ctx)
+	})
 	if resp != nil {
-		logger.Infof("fail fast in inventory lookup: %s", time.Since(t))
+		logger.Infof("fail fast in inventory lookup: %s", dur)
 		return resp, nil
 	}
 
-	t = time.Now()
-	resp = r.newInputTree(ctx)
-	addTimestamp("input tree", time.Since(t))
+	dur = espan.Do(ctx, "input tree", 30*time.Second, func(ctx context.Context) {
+		resp = r.newInputTree(ctx)
+	})
 	if resp != nil {
-		logger.Infof("fail fast in input tree: %s", time.Since(t))
+		logger.Infof("fail fast in input tree: %s", dur)
 		return resp, nil
 	}
 
-	t = time.Now()
-	r.setupNewAction(ctx)
-	addTimestamp("setup", time.Since(t))
+	espan.Do(ctx, "setup", 1*time.Second, func(ctx context.Context) {
+		r.setupNewAction(ctx)
+	})
 
 	eresp := &rpb.ExecuteResponse{}
 	var cached bool
-	t = time.Now()
-	eresp.Result, cached = r.checkCache(ctx)
-	addTimestamp("check cache", time.Since(t))
+	espan.Do(ctx, "check cache", 1*time.Second, func(ctx context.Context) {
+		eresp.Result, cached = r.checkCache(ctx)
+	})
 	if !cached {
-		t = time.Now()
-		blobs, err := r.missingBlobs(ctx)
-		addTimestamp("check missing", time.Since(t))
+		var blobs []*rpb.Digest
+		var err error
+		espan.Do(ctx, "check missing", 10*time.Second, func(ctx context.Context) {
+			blobs, err = r.missingBlobs(ctx)
+		})
 		if err != nil {
 			logger.Errorf("error in check missing blobs: %v", err)
 			return nil, err
 		}
 
-		t = time.Now()
-		resp, err = r.uploadBlobs(ctx, blobs)
-		addTimestamp("upload blobs", time.Since(t))
+		espan.Do(ctx, "upload blobs", 30*time.Second, func(ctx context.Context) {
+			resp, err = r.uploadBlobs(ctx, blobs)
+		})
 		if err != nil {
 			logger.Errorf("error in upload blobs: %v", err)
 			return nil, err
@@ -332,17 +382,16 @@ func (f *Adapter) Exec(ctx context.Context, req *gomapb.ExecReq) (resp *gomapb.E
 			return resp, nil
 		}
 
-		t = time.Now()
-		eresp, err = r.executeAction(ctx)
-		addTimestamp("execute", time.Since(t))
+		espan.Do(ctx, "execute", 0, func(ctx context.Context) {
+			eresp, err = r.executeAction(ctx)
+		})
 		if err != nil {
 			logger.Infof("execute err=%v", err)
 			return nil, err
 		}
 	}
-	t = time.Now()
-	resp, err = r.newResp(ctx, eresp, cached)
-	addTimestamp("response", time.Since(t))
-	addTimestamp("total", time.Since(t0))
+	espan.Do(ctx, "response", 30*time.Second, func(ctx context.Context) {
+		resp, err = r.newResp(ctx, eresp, cached)
+	})
 	return resp, err
 }

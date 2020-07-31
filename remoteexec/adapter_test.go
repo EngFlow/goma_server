@@ -237,7 +237,7 @@ func TestAdapterHandleMissingInputFilename(t *testing.T) {
 	}
 
 	t.Logf("clear in-memory digest cache, but still in redis.")
-	cluster.adapter.DigestCache = digest.NewCache(&cluster.redis)
+	cluster.adapter.DigestCache = digest.NewCache(&cluster.redis, 1e6)
 
 	req = &gomapb.ExecReq{
 		CommandSpec: clang.CommandSpec("clang", "bin/clang"),

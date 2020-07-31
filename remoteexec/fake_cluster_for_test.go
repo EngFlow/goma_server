@@ -130,7 +130,7 @@ func (f *fakeCluster) setup(ctx context.Context, instancePrefix string) error {
 		ExecTimeout:       10 * time.Second,
 		Client:            Client{ClientConn: f.conn},
 		GomaFile:          fpb.NewFileServiceClient(f.fconn),
-		DigestCache:       digest.NewCache(&f.redis),
+		DigestCache:       digest.NewCache(&f.redis, 1e6),
 		CmdStorage:        &f.cmdStorage,
 		ToolDetails:       &rpb.ToolDetails{},
 		FileLookupSema:    make(chan struct{}, 2),
