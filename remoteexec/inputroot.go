@@ -163,23 +163,7 @@ func checkInputRootDir(filepath clientFilePath, dir string) error {
 // If second return value is true, chroot must be used.  It become true only
 // if `allowChroot` is true and common input root is "/".
 func inputRootDir(filepath clientFilePath, paths []string, allowChroot bool) (string, bool, error) {
-	root := commonDir(filepath, paths)
-	if needChroot(filepath, root) && allowChroot {
-		switch filepath.(type) {
-		// TODO: support non-posix platform
-		case posixpath.FilePath:
-			return "/", true, nil
-		}
-	}
-	if !validCommonDir(filepath, root) {
-		pair := getPathsWithNoCommonDir(filepath, paths)
-		return "", false, fmt.Errorf("no common paths in inputs: %v", pair)
-	}
-	err := checkInputRootDir(filepath, root)
-	if err != nil {
-		return "", false, err
-	}
-	return root, false, nil
+	return "/", false, nil
 }
 
 var errOutOfRoot = errors.New("out of root")
