@@ -718,10 +718,6 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 	switch wt {
 	case wrapperNsjailChroot:
 		logger.Infof("run with nsjail chroot")
-		// needed for bind mount.
-		r.addPlatformProperty(ctx, "dockerPrivileged", "true")
-		// needed for chroot command and mount command.
-		r.addPlatformProperty(ctx, "dockerRunAsRoot", "true")
 		nsjailCfg := nsjailConfig(cwd, r.filepath, r.gomaReq.GetToolchainSpecs(), r.gomaReq.Env)
 		files = []fileDesc{
 			{
@@ -737,13 +733,9 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 	case wrapperInputRootAbsolutePath:
 		if rand.Float64() < r.f.HardeningRatio {
 			logger.Infof("run with InputRootAbsolutePath + runsc")
-			r.addPlatformProperty(ctx, "dockerRuntime", "runsc")
-			r.addPlatformProperty(ctx, "label:runsc", "available")
 		} else {
 			logger.Infof("run with InputRootAbsolutePath")
 		}
-		// https://cloud.google.com/remote-build-execution/docs/remote-execution-properties#container_properties
-		r.addPlatformProperty(ctx, "InputRootAbsolutePath", r.tree.RootDir())
 		for _, e := range r.gomaReq.Env {
 			envs = append(envs, e)
 		}
@@ -757,8 +749,6 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 	case wrapperRelocatable:
 		if rand.Float64() < r.f.HardeningRatio {
 			logger.Infof("run with chdir + runsc: relocatable")
-			r.addPlatformProperty(ctx, "dockerRuntime", "runsc")
-			r.addPlatformProperty(ctx, "label:runsc", "available")
 		} else {
 			logger.Infof("run with chdir: relocatable")
 		}
@@ -793,8 +783,6 @@ func (r *request) newWrapperScript(ctx context.Context, cmdConfig *cmdpb.Config,
 		}
 	case wrapperWinInputRootAbsolutePath:
 		logger.Infof("run on win with InputRootAbsolutePath")
-		// https://cloud.google.com/remote-build-execution/docs/remote-execution-properties#container_properties
-		r.addPlatformProperty(ctx, "InputRootAbsolutePath", r.tree.RootDir())
 		wn, data, err := wrapperForWindows(ctx)
 		if err != nil {
 			return err
