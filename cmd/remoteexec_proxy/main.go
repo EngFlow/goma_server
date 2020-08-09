@@ -67,6 +67,7 @@ var (
 	serviceAccountJSON     = flag.String("service-account-json", "", "service account json, used to talk to RBE and cloud storage (if --file-cache-bucket is used)")
 	platformContainerImage = flag.String("platform-container-image", "", "docker uri of platform container image")
 	insecureRemoteexec     = flag.Bool("insecure-remoteexec", false, "insecure grpc for remoteexec API")
+	insecureServerAccess   = flag.Bool("insecure-serveraccess", false, "insecure access between goma client/server")
 	insecureSkipVerify     = flag.Bool("insecure-skip-verify", false, "insecure skip verifying the server certificate")
 	execMaxRetryCount      = flag.Int("exec-max-retry-count", 5, "max retry count for exec call. 0 is unlimited count, but bound to ctx timtout. Use small number for powerful clients to run local fallback quickly. Use large number for powerless clients to use remote more than local.")
 
@@ -438,13 +439,21 @@ func main() {
 		logger.Fatal(err)
 	}
 	mux := http.DefaultServeMux
+
+	var authenticator httprpc.Auth
+	if *insecureServerAccess {
+		authenticator = auth.AllowAuth{}
+		logger.Warnf("No Authentication setup on goma server")
+	} else {
+		authenticator = &auth.Auth{
+			Client: authClient{Service: authService},
+		}
+	}
 	frontend.Register(mux, frontend.Frontend{
 		Backend: localBackend{
 			ExecService: reExecServer{re},
 			FileService: reFileServer{fileServiceClient.Service},
-			Auth: &auth.Auth{
-				Client: authClient{Service: authService},
-			},
+			Auth:        authenticator,
 		},
 	})
 
