@@ -1,0 +1,14 @@
+version_id: "1234"
+configs: {
+    target: {
+        addr: "localhost:8980"
+    }
+    remoteexec_platform: {
+        properties:{
+            name:"OSFamily"
+            value:"Linux"
+        }
+        rbe_instance_basename:"remote-execution"
+    }
+    dimensions: "os:linux"
+}
