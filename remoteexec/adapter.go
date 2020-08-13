@@ -356,7 +356,7 @@ func (f *Adapter) Exec(ctx context.Context, req *gomapb.ExecReq) (resp *gomapb.E
 
 	eresp := &rpb.ExecuteResponse{}
 	var cached bool
-	espan.Do(ctx, "check cache", 1*time.Second, func(ctx context.Context) {
+	espan.Do(ctx, "check cache", 3*time.Second, func(ctx context.Context) {
 		eresp.Result, cached = r.checkCache(ctx)
 	})
 	if !cached {

@@ -42,7 +42,7 @@ type gomaOutput struct {
 }
 
 func retryCAS(ctx context.Context, f func(ctx context.Context) error) error {
-	timeout := 1 * time.Second
+	timeout := 3 * time.Second
 	n := 0
 	return rpc.Retry{}.Do(ctx, func() error {
 		n++
