@@ -11,6 +11,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"flag"
 	"fmt"
 	"html/template"
@@ -68,6 +69,7 @@ var (
 	platformContainerImage = flag.String("platform-container-image", "", "docker uri of platform container image")
 	insecureRemoteexec     = flag.Bool("insecure-remoteexec", false, "insecure grpc for remoteexec API")
 	insecureSkipVerify     = flag.Bool("insecure-skip-verify", false, "insecure skip verifying the server certificate")
+	tlsCertificate         = flag.String("tls-certificate", "", "TLS CA certificate to verify the server certificate")
 	execMaxRetryCount      = flag.Int("exec-max-retry-count", 5, "max retry count for exec call. 0 is unlimited count, but bound to ctx timtout. Use small number for powerful clients to run local fallback quickly. Use large number for powerless clients to use remote more than local.")
 
 	fileCacheBucket = flag.String("file-cache-bucket", "", "file cache bucking store bucket")
@@ -351,8 +353,23 @@ func main() {
 		},
 	}
 
+	certPool, _ := x509.SystemCertPool()
+	// Fall back to an empty pool if the system cert pool could not be loaded.
+	if certPool == nil {
+		certPool = x509.NewCertPool()
+	}
+	if *tlsCertificate != "" {
+		caCert, err := ioutil.ReadFile(*tlsCertificate)
+		if err != nil {
+			logger.Fatal(err)
+		}
+		if ok := certPool.AppendCertsFromPEM(caCert); !ok {
+			logger.Warnf("No certificates loaded from %s", *tlsCertificate)
+		}
+	}
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: *insecureSkipVerify,
+		RootCAs: certPool,
 	}
 	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)),
