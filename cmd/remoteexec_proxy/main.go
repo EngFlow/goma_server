@@ -71,6 +71,8 @@ var (
 	insecureServerAccess   = flag.Bool("insecure-serveraccess", false, "insecure access between goma client/server")
 	insecureSkipVerify     = flag.Bool("insecure-skip-verify", false, "insecure skip verifying the server certificate")
 	tlsCertificate         = flag.String("tls-certificate", "", "TLS CA certificate to verify the server certificate")
+	tlsClientCertificate   = flag.String("tls-client-certificate", "", "TLS client certificate to present to the server")
+	tlsClientKey           = flag.String("tls-client-key", "", "TLS client key to use with the client certificate")
 	execMaxRetryCount      = flag.Int("exec-max-retry-count", 5, "max retry count for exec call. 0 is unlimited count, but bound to ctx timtout. Use small number for powerful clients to run local fallback quickly. Use large number for powerless clients to use remote more than local.")
 
 	fileCacheBucket = flag.String("file-cache-bucket", "", "file cache bucking store bucket")
@@ -372,6 +374,15 @@ func main() {
 		InsecureSkipVerify: *insecureSkipVerify,
 		RootCAs: certPool,
 	}
+	// Configure a client certificate if specified.
+	if *tlsClientCertificate != "" && *tlsClientKey != "" {
+		cert, err := tls.LoadX509KeyPair(*tlsClientCertificate, *tlsClientKey)
+		if err != nil {
+			logger.Fatal(err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+
 	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)),
 		grpc.WithStatsHandler(&ocgrpc.ClientHandler{}),
