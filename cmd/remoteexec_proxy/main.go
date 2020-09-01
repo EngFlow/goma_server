@@ -69,7 +69,7 @@ var (
 	platformContainerImage = flag.String("platform-container-image", "", "docker uri of platform container image")
 	insecureRemoteexec     = flag.Bool("insecure-remoteexec", false, "insecure grpc for remoteexec API")
 	insecureSkipVerify     = flag.Bool("insecure-skip-verify", false, "insecure skip verifying the server certificate")
-	tlsCertificate         = flag.String("tls-certificate", "", "TLS CA certificate to verify the server certificate")
+	tlsCertificate         = flag.String("additional-tls-certificate", "", "additional TLS root certificate for verifying the server certificate")
 	execMaxRetryCount      = flag.Int("exec-max-retry-count", 5, "max retry count for exec call. 0 is unlimited count, but bound to ctx timtout. Use small number for powerful clients to run local fallback quickly. Use large number for powerless clients to use remote more than local.")
 
 	fileCacheBucket = flag.String("file-cache-bucket", "", "file cache bucking store bucket")
